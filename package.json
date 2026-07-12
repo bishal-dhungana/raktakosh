@@ -1,0 +1,37 @@
+{
+  "name": "raktakosh-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Raktakosh — Blood Coordination Platform, Version 1.0",
+  "scripts": {
+    "dev": "node scripts/check-local-ports.mjs && concurrently -k -n API,WEB -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "serve": "npm run build && npm run start",
+    "reset-data": "node scripts/reset-showcase-data.mjs",
+    "test": "tsx --test server/**/*.test.ts"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}
