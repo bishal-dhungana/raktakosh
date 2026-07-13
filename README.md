@@ -8,6 +8,7 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 
 - [What the platform provides](#what-the-platform-provides)
 - [User roles](#user-roles)
+- [Multi-tenant Blood Bank management](#multi-tenant-blood-bank-management)
 - [How coordination works](#how-coordination-works)
 - [Technology and architecture](#technology-and-architecture)
 - [Nepal district coverage](#nepal-district-coverage)
@@ -43,6 +44,12 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 | Platform administrator | Review facilities, staff account state, policy versions, and audit activity. |
 
 Blood Bank staff accounts are issued by the platform or verified facility administration; they cannot be created through public requester/donor registration.
+
+## Multi-tenant Blood Bank management
+
+The platform administrator is the **Super Admin**. From the governance workspace, the Super Admin can create an isolated Blood Bank tenant and issue its first Blood Bank Admin email and temporary password. The tenant admin must complete TOTP MFA and replace that temporary password before the dashboard allows access to any tenant data. Each tenant remains restricted to its own facility-scoped requests, availability, documents, and consented donor responses.
+
+See [Multi-tenant Blood Bank management](docs/MULTI-TENANCY.md) for the full provisioning and first-sign-in flow.
 
 ## How coordination works
 
@@ -227,6 +234,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 | [Module catalogue](docs/MODULES.md) | Platform modules and their users. |
 | [District coverage](docs/DISTRICT-COVERAGE.md) | Nepal-wide district directory and data-coverage behavior. |
 | [Blood-centre operations](docs/FACILITY-OPERATIONS.md) | Facility dashboard roles, private-data boundaries, and API behavior. |
+| [Multi-tenant management](docs/MULTI-TENANCY.md) | Super Admin provisioning, forced first-password change, and tenant isolation. |
 | [Donor pre-screening](docs/DONOR-PRE-SCREENING.md) | DOB, derived age, consented questionnaire, reviewer access, and deployment migration. |
 | [Verification documents](docs/REQUEST-DOCUMENTS.md) | Mandatory request document, private R2 storage, scanning, review, and retention workflow. |
 | [Testing report](docs/TESTING-REPORT.md) | Automated checks and deployment smoke tests. |

@@ -234,7 +234,7 @@ function App() {
             onExplore={() => setAuthOpen(true)}
           />
         ) : user ? (
-          <Dashboard user={user} locale={locale} onMessage={setNotice} onReturnHome={() => setView("home")} />
+          user.passwordChangeRequired ? <section className="dashboard-shell section-wrap"><Card><div className="card-eyebrow">SECURITY REQUIRED</div><h1>Change your temporary password.</h1><p className="card-intro">Your Blood Bank account is protected until you choose a new password.</p></Card></section> : <Dashboard user={user} locale={locale} onMessage={setNotice} onReturnHome={() => setView("home")} />
         ) : null}
       </main>
 
@@ -246,6 +246,7 @@ function App() {
 
       {authOpen && <AuthDialog locale={locale} initialAudience="personal" onOpenBloodBankLogin={() => { setAuthOpen(false); setBloodBankAuthOpen(true); }} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
       {bloodBankAuthOpen && <AuthDialog locale={locale} initialAudience="blood_bank" onClose={() => setBloodBankAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setBloodBankAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s Blood Bank Dashboard is ready.`); }} />}
+      {user?.passwordChangeRequired && <PasswordChangeDialog onChanged={(updatedUser) => { setUser(updatedUser); setView("dashboard"); setNotice("Password changed. Your Blood Bank Dashboard is now unlocked."); }} />}
     </div>
   );
 }
@@ -435,7 +436,7 @@ function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, on
         <button className="dialog-close" onClick={onClose} aria-label="Close sign in">×</button>
         <Pill className="access-pill">{isBloodBankStaff ? "BLOOD BANK STAFF ACCESS" : "SECURE ACCOUNT ACCESS"}</Pill>
         <h2 id="auth-title">{isBloodBankStaff ? "Blood Bank portal." : mode === "signin" ? "Welcome back." : "Create your account."}</h2>
-        <p>{isBloodBankStaff ? "Enter the email and password issued for your Blood Bank staff account. Multi-factor verification is required after this step." : mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Blood Bank staff accounts are provisioned by an authorized administrator."}</p>
+        <p>{isBloodBankStaff ? "Enter the email and temporary password issued by your Super Admin. You will set your own password after multi-factor verification." : mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Blood Bank staff accounts are provisioned by an authorized administrator."}</p>
         {!isBloodBankStaff && <div className="auth-mode-switch" role="tablist" aria-label="Personal account access mode"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }} role="tab" aria-selected={mode === "signin"}>Sign in</button><button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }} role="tab" aria-selected={mode === "register"}>Create account</button></div>}
         <form className="auth-form account-form" onSubmit={submit}>
           {!isBloodBankStaff && mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
@@ -450,6 +451,23 @@ function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, on
       </section>
     </div>
   );
+}
+
+function PasswordChangeDialog({ onChanged }: { onChanged: (user: CurrentUser) => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setWorking(true); setError("");
+    try {
+      const result = await api<{ user: CurrentUser }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword, confirmation }) });
+      onChanged(result.user);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Your password could not be changed."); }
+    finally { setWorking(false); }
+  }
+  return <div className="modal-backdrop" role="presentation"><section className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="change-password-title"><Pill className="access-pill">FIRST SIGN-IN SECURITY</Pill><h2 id="change-password-title">Choose your own password.</h2><p>Your Super Admin issued a temporary password. Replace it now before accessing any Blood Bank data.</p><form className="auth-form account-form" onSubmit={submit}><label><span>Temporary password</span><input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required autoFocus /></label><label><span>New password</span><input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" minLength={12} required /></label><label className="full-field"><span>Confirm new password</span><input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" minLength={12} required /></label><small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol. Do not reuse the temporary password.</small>{error && <Notice tone="warning">{error}</Notice>}<button className="button button-signal full-field" type="submit" disabled={working}>{working ? "Changing password…" : "Save new password and continue"}</button></form></section></div>;
 }
 
 function Dashboard({ user, locale, onMessage, onReturnHome }: { user: CurrentUser; locale: Locale; onMessage: (message: string) => void; onReturnHome: () => void }) {
@@ -727,6 +745,9 @@ function FacilityWorkspace({ user, locale, onMessage }: { user: CurrentUser; loc
 
 function AdminDashboard({ locale, onMessage }: { locale: Locale; onMessage: (message: string) => void }) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [provisioning, setProvisioning] = useState(false);
+  const [issuedCredential, setIssuedCredential] = useState<{ facilityName: string; email: string; temporaryPassword: string } | null>(null);
+  const [tenantForm, setTenantForm] = useState({ facilityName: "", facilityType: "Blood Bank", district: "", address: "", publicContact: "", operatingHours: "", acceptsRequests: true, participatesOutreach: false, activateNow: true, adminName: "", adminEmail: "", adminPhone: "", temporaryPassword: "" });
   async function load() {
     try { setOverview((await api<{ overview: AdminOverview }>("/api/admin/overview")).overview); }
     catch (error) { onMessage(error instanceof Error ? error.message : "Could not load governance data."); }
@@ -736,11 +757,27 @@ function AdminDashboard({ locale, onMessage }: { locale: Locale; onMessage: (mes
     try { await api(`/api/admin/staff/${id}/status`, { method: "PATCH", body: JSON.stringify({ accountStatus }) }); onMessage(`Staff account ${accountStatus}. Active sessions were revoked when applicable.`); await load(); }
     catch (error) { onMessage(error instanceof Error ? error.message : "Staff access could not be updated."); }
   }
+  function generateTemporaryPassword() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+    const values = crypto.getRandomValues(new Uint32Array(18));
+    setTenantForm((current) => ({ ...current, temporaryPassword: Array.from(values, (value) => alphabet[value % alphabet.length]).join("") }));
+  }
+  async function provisionTenant(event: FormEvent) {
+    event.preventDefault(); setProvisioning(true);
+    try {
+      const result = await api<{ tenant: { facilityName: string; adminEmail: string } }>("/api/admin/tenants", { method: "POST", body: JSON.stringify(tenantForm) });
+      setIssuedCredential({ facilityName: result.tenant.facilityName, email: result.tenant.adminEmail, temporaryPassword: tenantForm.temporaryPassword });
+      setTenantForm({ facilityName: "", facilityType: "Blood Bank", district: "", address: "", publicContact: "", operatingHours: "", acceptsRequests: true, participatesOutreach: false, activateNow: true, adminName: "", adminEmail: "", adminPhone: "", temporaryPassword: "" });
+      onMessage("Blood Bank tenant and first admin account created. Share the issued credential securely."); await load();
+    } catch (error) { onMessage(error instanceof Error ? error.message : "The Blood Bank tenant could not be created."); }
+    finally { setProvisioning(false); }
+  }
   if (!overview) return <div className="loader">Loading governance overview…</div>;
   return <div className="admin-grid">
+    <Card className="admin-provision"><div className="card-eyebrow">MULTI-TENANT PROVISIONING</div><h2>Add a Blood Bank branch and first admin.</h2><p className="card-intro">This creates one isolated facility tenant and one Blood Bank Admin. The temporary password is never stored in readable form; the branch must replace it after first sign-in.</p>{issuedCredential && <Notice tone="success"><b>Credential issued for {issuedCredential.facilityName}</b><br />Email: <code>{issuedCredential.email}</code><br />Temporary password: <code>{issuedCredential.temporaryPassword}</code><br /><small>Copy and share this securely now. It will not be shown again after you dismiss this notice.</small><br /><button className="text-button" type="button" onClick={() => setIssuedCredential(null)}>Dismiss credential</button></Notice>}<form className="form-grid" onSubmit={provisionTenant}><label className="full-field"><span>Blood Bank / branch name</span><input value={tenantForm.facilityName} onChange={(event) => setTenantForm({ ...tenantForm, facilityName: event.target.value })} placeholder="e.g. Damak Red Cross Society" required /></label><label><span>Facility type</span><input value={tenantForm.facilityType} onChange={(event) => setTenantForm({ ...tenantForm, facilityType: event.target.value })} required /></label><label><span>District</span><select value={tenantForm.district} onChange={(event) => setTenantForm({ ...tenantForm, district: event.target.value })} required><option value="">Choose district</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label className="full-field"><span>Address</span><input value={tenantForm.address} onChange={(event) => setTenantForm({ ...tenantForm, address: event.target.value })} placeholder="Street / municipality / district" required /></label><label><span>Public contact number</span><input value={tenantForm.publicContact} onChange={(event) => setTenantForm({ ...tenantForm, publicContact: event.target.value })} placeholder="e.g. +977..." required /></label><label><span>Operating hours</span><input value={tenantForm.operatingHours} onChange={(event) => setTenantForm({ ...tenantForm, operatingHours: event.target.value })} placeholder="e.g. Sun–Fri · 09:00–17:00 NPT" required /></label><label><span>Branch admin name</span><input value={tenantForm.adminName} onChange={(event) => setTenantForm({ ...tenantForm, adminName: event.target.value })} required /></label><label><span>Branch admin email</span><input type="email" value={tenantForm.adminEmail} onChange={(event) => setTenantForm({ ...tenantForm, adminEmail: event.target.value })} required /></label><label><span>Branch admin phone</span><input value={tenantForm.adminPhone} onChange={(event) => setTenantForm({ ...tenantForm, adminPhone: event.target.value })} required /></label><label><span>Temporary password</span><div className="password-field"><input type="text" value={tenantForm.temporaryPassword} onChange={(event) => setTenantForm({ ...tenantForm, temporaryPassword: event.target.value })} minLength={12} required /><button className="button button-outline" type="button" onClick={generateTemporaryPassword}>Generate</button></div></label><small className="password-guidance full-field">Use 12+ characters with upper-case, lower-case, number, and symbol. The branch must change it after first sign-in.</small><label className="checkbox-line full-field"><input type="checkbox" checked={tenantForm.activateNow} onChange={(event) => setTenantForm({ ...tenantForm, activateNow: event.target.checked })} /> Activate this branch for Blood Bank operations now</label><label className="checkbox-line full-field"><input type="checkbox" checked={tenantForm.acceptsRequests} onChange={(event) => setTenantForm({ ...tenantForm, acceptsRequests: event.target.checked })} /> Allow private blood requests to be routed to this branch</label><label className="checkbox-line full-field"><input type="checkbox" checked={tenantForm.participatesOutreach} onChange={(event) => setTenantForm({ ...tenantForm, participatesOutreach: event.target.checked })} /> Allow controlled donor outreach for this branch</label><button className="button button-signal full-field" type="submit" disabled={provisioning}>{provisioning ? "Creating Blood Bank tenant…" : "Create Blood Bank Admin credential"}</button></form></Card>
     <Card className="admin-facilities"><div className="card-eyebrow">FACILITY VERIFICATION</div><h2>Public visibility begins with a verified operating partner.</h2><div className="facility-table"><div className="table-row table-head"><span>Facility</span><span>Status</span><span>Public</span><span>Open requests</span></div>{overview.facilities.map((facility) => <div className="table-row" key={facility.id}><div><b>{facility.name}</b><small>{facility.district}</small></div><Pill className={`verification ${facility.status}`}>{facility.status}</Pill><span>{facility.publicAvailability ? "Enabled" : "Hidden"}</span><strong>{facility.openRequests}</strong></div>)}</div></Card>
     <Card className="admin-policies"><div className="card-eyebrow">PUBLISHED POLICY</div><h2>Visible rules; no hidden medical automation.</h2>{overview.policies.map((policy) => <article className="policy-row" key={policy.id}><div><Pill>{policy.version}</Pill><h3>{policy.name}</h3></div><p>{policy.summary}</p><small>Effective {formatDate(policy.effectiveAt, locale, false)}</small></article>)}</Card>
-    <Card className="admin-staff"><div className="card-eyebrow">STAFF ACCESS SECURITY</div><h2>Protect facility and platform access.</h2><div className="staff-table"><div className="staff-row staff-head"><span>Staff member</span><span>MFA</span><span>State</span><span>Action</span></div>{overview.staff.map((member) => <div className="staff-row" key={member.id}><div><b>{member.name}</b><small>{member.role.replaceAll("_", " ")} · {member.facilityName || "Platform"}</small></div><Pill className={member.mfaEnabled ? "verification verified" : "verification suspended"}>{member.mfaEnabled ? "MFA enabled" : "MFA required"}</Pill><Pill className={`verification ${member.accountStatus === "active" ? "verified" : "suspended"}`}>{member.accountStatus}</Pill><button className="text-button danger-text" disabled={member.accountStatus === "suspended"} onClick={() => void changeStaffStatus(member.id, "suspended")}>Suspend</button></div>)}</div></Card>
+    <Card className="admin-staff"><div className="card-eyebrow">STAFF ACCESS SECURITY</div><h2>Protect tenant staff access.</h2><div className="staff-table"><div className="staff-row staff-head"><span>Staff member</span><span>Sign-in setup</span><span>State</span><span>Action</span></div>{overview.staff.map((member) => <div className="staff-row" key={member.id}><div><b>{member.name}</b><small>{roleLabels[member.role]} · {member.facilityName || "Platform"}</small></div><div><Pill className={member.passwordChangeRequired ? "verification suspended" : member.mfaEnabled ? "verification verified" : "verification suspended"}>{member.passwordChangeRequired ? "Password change required" : member.mfaEnabled ? "MFA enabled" : "MFA setup required"}</Pill><small>MFA: {member.mfaEnabled ? "enabled" : "not enrolled"}</small></div><Pill className={`verification ${member.accountStatus === "active" ? "verified" : "suspended"}`}>{member.accountStatus}</Pill><button className="text-button danger-text" disabled={member.accountStatus === "suspended"} onClick={() => void changeStaffStatus(member.id, "suspended")}>Suspend</button></div>)}</div></Card>
     <Card className="audit-card"><div className="card-eyebrow">AUDIT FEED</div><h2>High-signal operating history.</h2><ol className="audit-feed">{overview.auditEvents.map((event) => <li key={event.id}><span className="audit-node" /><div><b>{event.action.replaceAll("_", " ")}</b><p>{event.actorName} · {event.entityType} #{event.entityId}</p><small>{formatDate(event.createdAt, locale)}</small></div></li>)}</ol></Card>
   </div>;
 }

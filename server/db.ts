@@ -102,6 +102,7 @@ export interface AuthUser {
   accountStatus: "active" | "suspended";
   mfaSecretEncrypted: string | null;
   mfaEnabledAt: string | null;
+  passwordChangeRequired: boolean;
 }
 
 export interface AuthChallenge {
@@ -160,7 +161,8 @@ export function verifyCsrfToken(token: string, submittedToken: string | undefine
 export async function getAuthUserByEmail(email: string): Promise<AuthUser | undefined> {
   return one<AuthUser>(
     `SELECT id, email, password_hash as passwordHash, role, account_status as accountStatus,
-            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt
+            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt,
+            CASE WHEN password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
      FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`,
     [email]
   );
@@ -169,7 +171,8 @@ export async function getAuthUserByEmail(email: string): Promise<AuthUser | unde
 export async function getAuthUserById(id: number): Promise<AuthUser | undefined> {
   return one<AuthUser>(
     `SELECT id, email, password_hash as passwordHash, role, account_status as accountStatus,
-            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt
+            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt,
+            CASE WHEN password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
      FROM users WHERE id = ? LIMIT 1`,
     [id]
   );
@@ -201,17 +204,20 @@ export async function enableMfa(userId: number): Promise<void> {
   await execute("UPDATE users SET mfa_enabled_at = ? WHERE id = ?", [now(), userId]);
 }
 
+type CurrentUserRow = Omit<CurrentUser, "passwordChangeRequired"> & { passwordChangeRequired: number };
+
 export async function getCurrentUser(token: string | undefined): Promise<CurrentUser | null> {
   if (!token) return null;
-  const row = await one<CurrentUser>(
-    `SELECT u.id, u.name, u.email, u.phone, u.role, u.facility_id as facilityId, f.name as facilityName
+  const row = await one<CurrentUserRow>(
+    `SELECT u.id, u.name, u.email, u.phone, u.role, u.facility_id as facilityId, f.name as facilityName,
+            CASE WHEN u.password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN facilities f ON f.id = u.facility_id
      WHERE s.token = ? AND s.expires_at > ? AND u.account_status = 'active' LIMIT 1`,
     [opaqueHash(token), now()]
   );
-  return row ?? null;
+  return row ? { ...row, passwordChangeRequired: Boolean(row.passwordChangeRequired) } : null;
 }
 
 const schema = [
@@ -243,6 +249,8 @@ const schema = [
     account_status VARCHAR(20) NOT NULL DEFAULT 'active',
     mfa_secret_encrypted TEXT NULL,
     mfa_enabled_at VARCHAR(40) NULL,
+    password_change_required_at VARCHAR(40) NULL,
+    password_changed_at VARCHAR(40) NULL,
     created_at VARCHAR(40) NOT NULL,
     UNIQUE KEY uq_users_email (email),
     KEY idx_users_facility_role (facility_id, role),
@@ -662,6 +670,18 @@ async function applySecurityMigrations(): Promise<void> {
       await execute("ALTER TABLE request_documents ADD COLUMN deleted_at VARCHAR(40) NULL AFTER retention_until");
     }
     await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [documentMigrationId, now()]);
+  }
+
+  const tenantProvisioningMigrationId = "2026-07-13-multi-tenant-provisioning";
+  const tenantProvisioningApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [tenantProvisioningMigrationId]);
+  if (!tenantProvisioningApplied) {
+    if (!(await columnExists("users", "password_change_required_at"))) {
+      await execute("ALTER TABLE users ADD COLUMN password_change_required_at VARCHAR(40) NULL AFTER mfa_enabled_at");
+    }
+    if (!(await columnExists("users", "password_changed_at"))) {
+      await execute("ALTER TABLE users ADD COLUMN password_changed_at VARCHAR(40) NULL AFTER password_change_required_at");
+    }
+    await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [tenantProvisioningMigrationId, now()]);
   }
 }
 

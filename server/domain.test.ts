@@ -6,6 +6,7 @@ import { deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, preliminary
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
 import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, safeDocumentName, scanDocument, validateDocument } from "./document-storage";
 import { donationCooldownActive, donationCooldownUntil, isValidDonationDate } from "../src/donor-cooldown";
+import { isStrongPassword } from "./password-policy";
 
 test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(NEPAL_DISTRICTS.length, 77);
@@ -28,6 +29,12 @@ test("restricts the dedicated Blood Bank sign-in to issued facility staff accoun
   assert.equal(isBloodBankStaff("requester"), false);
   assert.equal(isBloodBankStaff("donor"), false);
   assert.equal(isBloodBankStaff("platform_admin"), false);
+});
+
+test("requires a strong replacement password for provisioned tenant staff", () => {
+  assert.equal(isStrongPassword("short"), false);
+  assert.equal(isStrongPassword("alllowercase123!"), false);
+  assert.equal(isStrongPassword("StrongBranch#2026"), true);
 });
 
 test("derives a Nepal-local age without storing an editable age", () => {

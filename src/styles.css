@@ -357,8 +357,11 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .checkbox-line input { width: 16px; min-height: 16px; margin: 0; accent-color: var(--signal); }
 
 .admin-grid { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(320px,0.78fr); align-items: start; gap: 17px; }
+.admin-provision { grid-column: 1 / -1; }
 .audit-card { grid-column: 1 / -1; }
 .admin-staff { grid-column: 1 / -1; }
+.password-field { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+.password-field .button { min-height: 44px; }
 .facility-table { display: grid; margin-top: 18px; border-top: 1px solid var(--line); }
 .table-row { display: grid; grid-template-columns: minmax(170px,1.3fr) 0.75fr 0.55fr 0.45fr; gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 10px; }
 .table-row > div { display: grid; gap: 2px; }
@@ -396,7 +399,7 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .education-grid { grid-template-columns: 1fr; }
   .requester-grid, .donor-grid, .facility-grid, .overview-grid, .admin-grid { grid-template-columns: 1fr; }
   .request-list-card, .inventory-side { position: static; max-height: none; overflow: visible; }
-  .admin-facilities, .admin-policies, .admin-staff, .audit-card { grid-column: auto; }
+  .admin-provision, .admin-facilities, .admin-policies, .admin-staff, .audit-card { grid-column: auto; }
   .facility-stats { grid-template-columns: repeat(2, 1fr); }
   .facility-stats article:nth-child(even) { border-right: 0; }
   .facility-stats article:nth-child(-n+4) { border-bottom: 1px solid var(--line); }
@@ -448,6 +451,7 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .blood-centre-heading { align-items: flex-start; flex-direction: column; }
   .blood-centre-heading > span { max-width: none; text-align: left; }
   .form-grid, .donor-form { grid-template-columns: 1fr; }
+  .password-field { grid-template-columns: 1fr; }
   .screening-question-list { grid-template-columns: 1fr; }
   .full-field { grid-column: auto; }
   .facility-stats { grid-template-columns: 1fr 1fr; }

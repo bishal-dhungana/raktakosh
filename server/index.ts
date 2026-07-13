@@ -63,6 +63,7 @@ import {
 } from "../src/donor-screening";
 import { isNepalDistrict } from "../src/nepal-districts";
 import { donationCooldownActive, donationCooldownMonths, donationCooldownUntil, isValidDonationDate, nepalCalendarDate } from "../src/donor-cooldown";
+import { isStrongPassword } from "./password-policy";
 import {
   DocumentWorkflowError,
   documentObjectKey,
@@ -384,6 +385,9 @@ async function requireAuth(req: AuthRequest, res: Response, next: NextFunction):
   try {
     const viewer = await getCurrentUser(getToken(req));
     if (!viewer) return apiError(res, 401, "Please sign in to continue.");
+    if (viewer.passwordChangeRequired && req.path !== "/api/auth/change-password" && req.path !== "/api/auth/logout") {
+      return apiError(res, 428, "Change the temporary password before accessing the Blood Bank workspace.");
+    }
     req.viewer = viewer;
     next();
   } catch (error) {
@@ -455,7 +459,7 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
     const phone = text(req.body?.phone, 40);
     const password = text(req.body?.password, 200);
     const role = text(req.body?.role, 30) as "requester" | "donor";
-    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || password.length < 12 || !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])/.test(password) || !["requester", "donor"].includes(role)) {
+    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || !isStrongPassword(password) || !["requester", "donor"].includes(role)) {
       return apiError(res, 400, "Enter a valid name, email, phone, account type, and a password of at least 12 characters with upper-case, lower-case, number, and symbol.");
     }
     const existing = await getAuthUserByEmail(email);
@@ -588,6 +592,29 @@ app.get("/api/auth/me", async (req, res, next) => {
     const token = getToken(req);
     const user = await getCurrentUser(token);
     res.json({ user, ...(user && token ? { csrfToken: csrfTokenFor(token) } : {}) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/change-password", requireAuth, requireCsrf, authRateLimit, async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const currentPassword = text(req.body?.currentPassword, 200);
+    const newPassword = text(req.body?.newPassword, 200);
+    const confirmation = text(req.body?.confirmation, 200);
+    if (!currentPassword || !newPassword || !confirmation) return apiError(res, 400, "Enter your current password, new password, and confirmation.");
+    if (newPassword !== confirmation) return apiError(res, 400, "The new password and confirmation do not match.");
+    if (!isStrongPassword(newPassword)) return apiError(res, 400, "Use at least 12 characters including upper-case, lower-case, a number, and a symbol.");
+    const account = await getAuthUserById(viewer.id);
+    if (!account || !verifyPassword(currentPassword, account.passwordHash)) return apiError(res, 401, "Your current password is not correct.");
+    if (verifyPassword(newPassword, account.passwordHash)) return apiError(res, 400, "Choose a new password that is different from the temporary password.");
+    const changedAt = new Date().toISOString();
+    await execute("UPDATE users SET password_hash = ?, password_change_required_at = NULL, password_changed_at = ? WHERE id = ?", [hashPassword(newPassword), changedAt, viewer.id]);
+    await deleteUserSessions(viewer.id);
+    const session = await createSession(viewer.id);
+    const user = await getCurrentUser(session.token);
+    await writeAudit(viewer.id, "password_changed", "user", viewer.id, { forcedChange: account.passwordChangeRequired, source: clientIp(req) });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.json({ user, csrfToken: session.csrfToken });
   } catch (error) { next(error); }
 });
 
@@ -1275,14 +1302,61 @@ app.get("/api/admin/overview", requireAuth, requireRoles("platform_admin"), asyn
       `SELECT a.id, a.action, a.entity_type as entityType, a.entity_id as entityId, COALESCE(u.name, 'System') as actorName, a.created_at as createdAt
        FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id ORDER BY a.created_at DESC, a.id DESC LIMIT 20`
     );
-    const staff = await query<Omit<AdminOverview["staff"][number], "mfaEnabled"> & { mfaEnabled: number }>(
+    const staff = await query<Omit<AdminOverview["staff"][number], "mfaEnabled" | "passwordChangeRequired"> & { mfaEnabled: number; passwordChangeRequired: number }>(
       `SELECT u.id, u.name, u.email, u.role, u.account_status as accountStatus, f.name as facilityName,
-              CASE WHEN u.mfa_enabled_at IS NULL THEN 0 ELSE 1 END as mfaEnabled
+              CASE WHEN u.mfa_enabled_at IS NULL THEN 0 ELSE 1 END as mfaEnabled,
+              CASE WHEN u.password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
        FROM users u LEFT JOIN facilities f ON f.id = u.facility_id
        WHERE u.role IN ('platform_admin', 'facility_admin', 'reviewer', 'inventory_manager')
        ORDER BY u.role, u.name`
     );
-    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, mfaEnabled: Boolean(member.mfaEnabled) })) } satisfies AdminOverview });
+    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, mfaEnabled: Boolean(member.mfaEnabled), passwordChangeRequired: Boolean(member.passwordChangeRequired) })) } satisfies AdminOverview });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/admin/tenants", requireAuth, requireCsrf, requireRoles("platform_admin"), writeRateLimit, async (req: AuthRequest, res, next) => {
+  try {
+    const facilityName = text(req.body?.facilityName, 180);
+    const facilityType = text(req.body?.facilityType, 80) || "Blood Bank";
+    const district = text(req.body?.district, 80);
+    const address = text(req.body?.address, 255);
+    const publicContact = text(req.body?.publicContact, 255);
+    const operatingHours = text(req.body?.operatingHours, 160);
+    const acceptsRequests = req.body?.acceptsRequests !== false;
+    const participatesOutreach = req.body?.participatesOutreach === true;
+    const activateNow = req.body?.activateNow !== false;
+    const adminName = text(req.body?.adminName, 160);
+    const adminEmail = text(req.body?.adminEmail, 190).toLowerCase();
+    const adminPhone = text(req.body?.adminPhone, 40);
+    const temporaryPassword = text(req.body?.temporaryPassword, 200);
+    if (!facilityName || !isNepalDistrict(district) || !address || !publicContact || !operatingHours || !adminName || !/^\S+@\S+\.\S+$/.test(adminEmail) || !adminPhone || !isStrongPassword(temporaryPassword)) {
+      return apiError(res, 400, "Enter complete Blood Bank details, a valid admin email and phone, and a strong temporary password.");
+    }
+    const [existingFacility, existingUser] = await Promise.all([
+      one<{ id: number }>("SELECT id FROM facilities WHERE LOWER(name) = LOWER(?) LIMIT 1", [facilityName]),
+      getAuthUserByEmail(adminEmail)
+    ]);
+    if (existingFacility) return apiError(res, 409, "A Blood Bank with this name already exists.");
+    if (existingUser) return apiError(res, 409, "An account already exists for this admin email.");
+    const createdAt = new Date().toISOString();
+    const verificationStatus = activateNow ? "verified" : "draft";
+    const created = await transaction(async (connection) => {
+      const [facilityResult] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO facilities (name, facility_type, district, address, public_contact, operating_hours, verification_status, public_availability, accepts_requests, participates_outreach, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        [facilityName, facilityType, district, address, publicContact, operatingHours, verificationStatus, acceptsRequests ? 1 : 0, participatesOutreach ? 1 : 0, createdAt]
+      );
+      const facilityId = Number(facilityResult.insertId);
+      const [adminResult] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO users (name, email, phone, role, facility_id, password_hash, verified_at, account_status, password_change_required_at, password_changed_at, created_at)
+         VALUES (?, ?, ?, 'facility_admin', ?, ?, ?, 'active', ?, NULL, ?)`,
+        [adminName, adminEmail, adminPhone, facilityId, hashPassword(temporaryPassword), createdAt, createdAt, createdAt]
+      );
+      return { facilityId, adminUserId: Number(adminResult.insertId) };
+    });
+    await writeAudit(req.viewer!.id, "tenant_provisioned", "facility", created.facilityId, { facilityName, district, adminUserId: created.adminUserId, verificationStatus, acceptsRequests, participatesOutreach });
+    await createNotification(created.adminUserId, "account", "Blood Bank account issued", "Your Blood Bank administrator account was issued. Sign in with the temporary password, enroll multi-factor authentication, and replace the temporary password before accessing the dashboard.");
+    res.status(201).json({ tenant: { facilityId: created.facilityId, facilityName, district, verificationStatus, adminUserId: created.adminUserId, adminEmail } });
   } catch (error) { next(error); }
 });
 
