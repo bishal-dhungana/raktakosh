@@ -119,6 +119,9 @@ export interface DonorProfile {
   preScreeningResult: string;
   policyVersion: string;
   lastDonationDate: string | null;
+  donationCooldownActive: boolean;
+  cooldownUntil: string | null;
+  donationCooldownMonths: number;
   dateOfBirth: string | null;
   age: number | null;
   eligibilityStatus: DonorEligibilityStatus;

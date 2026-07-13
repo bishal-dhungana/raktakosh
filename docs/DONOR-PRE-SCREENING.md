@@ -38,6 +38,14 @@ The API checks the donor's active, interested response to a facility campaign be
 2. A `no` / `not applicable` questionnaire becomes **Pending**, not automatic eligibility.
 3. Only a reviewer or facility administrator at the facility connected to the donor's active accepted response can set a facility review status.
 4. The facility must use its approved clinical policy for all real donation decisions.
+5. When an authorized facility records a confirmed donation, Raktakosh applies the configured donation cooldown (three calendar months by default). The donor cannot be selected for new outreach until that date. This is an operational safeguard, not clinical clearance.
+
+## Confirmed donation cooldown
+
+- Only a reviewer or facility administrator who has an active, accepted outreach response from the donor can record a confirmed donation date.
+- The record is auditable, cannot be future-dated, and cannot replace a newer recorded donation date.
+- The donor is placed into **temporarily deferred** availability and sees the date when new outreach can resume.
+- `DONATION_COOLDOWN_MONTHS` is configurable and defaults to `3`; a facility must confirm its own approved donor-selection policy before changing it.
 
 ## API endpoints
 

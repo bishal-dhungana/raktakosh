@@ -62,6 +62,7 @@ import {
   type DonorEligibilityStatus
 } from "../src/donor-screening";
 import { isNepalDistrict } from "../src/nepal-districts";
+import { donationCooldownActive, donationCooldownMonths, donationCooldownUntil, isValidDonationDate, nepalCalendarDate } from "../src/donor-cooldown";
 import {
   DocumentWorkflowError,
   documentObjectKey,
@@ -853,13 +854,15 @@ app.post("/api/requests/:id/outreach", requireAuth, requireCsrf, requireRoles("r
     const row = await requestRow(requestId);
     if (!row || viewer.facilityId !== row.facility_id) return apiError(res, 404, "Request not found.");
     if (row.status !== "inventory_unavailable") return apiError(res, 409, "Outreach is only available after a verified request is marked Inventory unavailable.");
+    const cooldownMonths = donationCooldownMonths();
     const candidates = await query<{ userId: number }>(
       `SELECT d.user_id as userId FROM donor_profiles d
-       WHERE d.outreach_consent = 1 AND d.availability = 'available' AND d.district = ?
-         AND d.self_reported_group = ? AND d.self_reported_rh = ?
-         AND (d.last_contact_at IS NULL OR d.last_contact_at < ?)
-       ORDER BY d.last_contact_at ASC LIMIT 25`,
-      [row.district, row.blood_group, row.rh_factor, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()]
+        WHERE d.outreach_consent = 1 AND d.availability = 'available' AND d.district = ?
+          AND d.self_reported_group = ? AND d.self_reported_rh = ?
+          AND (d.last_contact_at IS NULL OR d.last_contact_at < ?)
+          AND (d.last_donation_date IS NULL OR DATE_ADD(d.last_donation_date, INTERVAL ${cooldownMonths} MONTH) <= ?)
+        ORDER BY d.last_contact_at ASC LIMIT 25`,
+      [row.district, row.blood_group, row.rh_factor, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(), nepalCalendarDate()]
     );
     if (!candidates.length) return apiError(res, 409, "No consented, available donors meet the configured outreach criteria right now.");
     const createdAt = new Date().toISOString();
@@ -939,7 +942,8 @@ app.get("/api/donor/profile", requireAuth, requireRoles("donor"), async (req: Au
     );
     if (!profile) return apiError(res, 404, "Donor profile not found.");
     const screening = await donorScreeningDto(req.viewer!.id);
-    res.json({ profile: { ...profile, outreachConsent: Boolean(profile.outreachConsent), age: profile.dateOfBirth ? deriveAge(profile.dateOfBirth) : null, eligibilityStatus: screening.eligibilityStatus } });
+    const cooldownUntil = donationCooldownUntil(profile.lastDonationDate);
+    res.json({ profile: { ...profile, outreachConsent: Boolean(profile.outreachConsent), age: profile.dateOfBirth ? deriveAge(profile.dateOfBirth) : null, eligibilityStatus: screening.eligibilityStatus, donationCooldownActive: donationCooldownActive(profile.lastDonationDate), cooldownUntil, donationCooldownMonths: donationCooldownMonths() } });
   } catch (error) { next(error); }
 });
 
@@ -1007,10 +1011,14 @@ app.patch("/api/donor/profile", requireAuth, requireCsrf, requireRoles("donor"),
     const maxContacts = Number(req.body?.maxContactsPerMonth);
     const allowedAvailability = new Set(["available", "unavailable", "temporarily_deferred", "opted_out"]);
     if (!allowedAvailability.has(availability) || !contactWindow || !Number.isInteger(maxContacts) || maxContacts < 1 || maxContacts > 4) return apiError(res, 400, "Choose a valid availability state, contact window, and monthly contact limit.");
-    const storedAvailability = outreachConsent ? availability : "opted_out";
+    const current = await one<{ lastDonationDate: string | null }>("SELECT last_donation_date as lastDonationDate FROM donor_profiles WHERE user_id = ? LIMIT 1", [viewer.id]);
+    const storedAvailability = outreachConsent
+      ? (availability === "available" && donationCooldownActive(current?.lastDonationDate) ? "temporarily_deferred" : availability)
+      : "opted_out";
     await execute("UPDATE donor_profiles SET availability = ?, outreach_consent = ?, contact_window = ?, max_contacts_per_month = ?, updated_at = ? WHERE user_id = ?", [storedAvailability, outreachConsent ? 1 : 0, contactWindow, maxContacts, new Date().toISOString(), viewer.id]);
-    await writeAudit(viewer.id, "donor_preferences_updated", "donor_profile", viewer.id, { availability: storedAvailability, outreachConsent, maxContacts });
-    res.json({ ok: true });
+    const cooldownUntil = donationCooldownUntil(current?.lastDonationDate);
+    await writeAudit(viewer.id, "donor_preferences_updated", "donor_profile", viewer.id, { availability: storedAvailability, outreachConsent, maxContacts, cooldownUntil });
+    res.json({ ok: true, cooldownUntil, availability: storedAvailability });
   } catch (error) { next(error); }
 });
 
@@ -1211,6 +1219,32 @@ app.patch("/api/facility/donors/:id/eligibility", requireAuth, requireCsrf, requ
     await createNotification(donorUserId, "donor_screening", "Pre-screening status updated", "A facility updated your pre-screening status. This is not a clinical diagnosis or final medical clearance.");
     await writeAudit(viewer.id, "donor_screening_reviewed", "donor_health_screening", donorUserId, { facilityId: viewer.facilityId, eligibilityStatus });
     res.json({ screening: await donorScreeningDto(donorUserId) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/facility/donors/:id/donations", requireAuth, requireCsrf, requireRoles("reviewer", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const donorUserId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    const donatedOn = text(req.body?.donatedOn, 10);
+    if (!donorUserId || !isValidDonationDate(donatedOn) || donatedOn > nepalCalendarDate()) return apiError(res, 400, "Record a valid donation date that is not in the future.");
+    if (!(await hasActiveInterestedDonorResponse(viewer.facilityId!, donorUserId))) return apiError(res, 404, "Donor response not found.");
+    const recordedAt = new Date().toISOString();
+    const cooldownUntil = donationCooldownUntil(donatedOn)!;
+    await transaction(async (connection) => {
+      const [rows] = await connection.execute("SELECT last_donation_date as lastDonationDate FROM donor_profiles WHERE user_id = ? FOR UPDATE", [donorUserId]);
+      const profile = (rows as Array<{ lastDonationDate: string | null }>)[0];
+      if (!profile) throw new DocumentWorkflowError("Donor profile not found.", 404);
+      if (profile.lastDonationDate && profile.lastDonationDate > donatedOn) throw new DocumentWorkflowError("A newer donation date is already recorded for this donor.", 409);
+      if (profile.lastDonationDate === donatedOn) throw new DocumentWorkflowError("This donation date is already recorded.", 409);
+      await connection.execute(
+        "UPDATE donor_profiles SET last_donation_date = ?, availability = CASE WHEN availability = 'opted_out' THEN 'opted_out' ELSE 'temporarily_deferred' END, updated_at = ? WHERE user_id = ?",
+        [donatedOn, recordedAt, donorUserId]
+      );
+    });
+    await createNotification(donorUserId, "donation", "Donation cooldown recorded", `A confirmed donation on ${donatedOn} was recorded. This platform will not select you for new outreach before ${cooldownUntil}. A blood-centre makes the final clinical decision.`);
+    await writeAudit(viewer.id, "donation_recorded", "donor_profile", donorUserId, { facilityId: viewer.facilityId, donatedOn, cooldownUntil, cooldownMonths: donationCooldownMonths() });
+    res.json({ donatedOn, cooldownUntil, cooldownMonths: donationCooldownMonths() });
   } catch (error) { next(error); }
 });
 

@@ -5,6 +5,7 @@ import { canViewFacilityCasework } from "./facility-access";
 import { deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, preliminaryEligibilityStatus } from "../src/donor-screening";
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
 import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, safeDocumentName, scanDocument, validateDocument } from "./document-storage";
+import { donationCooldownActive, donationCooldownUntil, isValidDonationDate } from "../src/donor-cooldown";
 
 test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(NEPAL_DISTRICTS.length, 77);
@@ -83,6 +84,15 @@ test("labels explicitly enabled demo uploads as unscanned", async () => {
       else process.env[key] = value;
     }
   }
+});
+
+test("enforces a three-calendar-month donation cooldown", () => {
+  assert.equal(donationCooldownUntil("2026-04-13", 3), "2026-07-13");
+  assert.equal(donationCooldownUntil("2026-01-31", 3), "2026-04-30");
+  assert.equal(donationCooldownActive("2026-04-13", new Date("2026-07-12T18:14:59.000Z"), 3), true);
+  assert.equal(donationCooldownActive("2026-04-13", new Date("2026-07-12T18:15:00.000Z"), 3), false);
+  assert.equal(isValidDonationDate("2026-02-29"), false);
+  assert.equal(isValidDonationDate("2024-02-29"), true);
 });
 
 test("does not present stale availability as current", () => {
