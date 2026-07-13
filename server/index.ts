@@ -354,7 +354,13 @@ app.post("/api/auth/logout", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/auth/me", requireAuth, (req: AuthRequest, res) => res.json({ user: req.viewer }));
+app.get("/api/auth/me", async (req, res, next) => {
+  try {
+    // A visitor without a session is a normal public state, not an API error.
+    // Returning `null` avoids an expected 401 in browser consoles on the landing page.
+    res.json({ user: await getCurrentUser(getToken(req)) });
+  } catch (error) { next(error); }
+});
 
 app.get("/api/policies", async (_req, res, next) => {
   try {

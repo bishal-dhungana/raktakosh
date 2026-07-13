@@ -139,7 +139,7 @@ function App() {
 
   useEffect(() => {
     void loadAvailability();
-    void api<{ user: CurrentUser }>("/api/auth/me")
+    void api<{ user: CurrentUser | null }>("/api/auth/me")
       .then((data) => setUser(data.user))
       .catch(() => undefined);
   }, []);

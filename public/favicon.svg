@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Raktakosh">
+  <rect width="64" height="64" rx="14" fill="#19232c"/>
+  <path d="M32 8C24 21 14 31 14 41a18 18 0 0 0 36 0C50 31 40 21 32 8Z" fill="#df4c38"/>
+  <path d="M24 41c4 4 12 5 16 0" fill="none" stroke="#fff8ee" stroke-linecap="round" stroke-width="4"/>
+</svg>
