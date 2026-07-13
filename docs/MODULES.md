@@ -2,7 +2,7 @@
 
 | Module | Main users | Primary functions |
 |---|---|---|
-| Public discovery | Guests and requesters | Search verified facility availability by district, group, Rh factor, and component. |
+| Public discovery | Guests and requesters | Search verified facility availability across all 77 Nepal districts by group, Rh factor, and component. |
 | Request coordination | Requesters | Submit and track a blood coordination request, attach a supporting document, and read the status timeline. |
 | Donor management | Donors | Maintain outreach consent, availability state, contact preferences, and campaign responses. |
 | Facility inventory | Inventory managers and facility administrators | Record availability, reserved quantity, public visibility, adjustment reason, and update history. |

@@ -51,6 +51,7 @@ import {
 } from "./db";
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
 import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
+import { isNepalDistrict } from "../src/nepal-districts";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8787);
@@ -336,8 +337,8 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
       if (role === "donor") {
         const bloodGroup = text(req.body?.bloodGroup, 4);
         const rhFactor = text(req.body?.rhFactor, 2);
-        const district = text(req.body?.district, 80) || "Morang";
-        if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor)) throw new Error("Donor registration requires a valid self-reported blood group and Rh factor.");
+        const district = text(req.body?.district, 80);
+        if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !isNepalDistrict(district)) throw new Error("Donor registration requires a valid blood group, Rh factor, and Nepal district.");
         await connection.execute(
           `INSERT INTO donor_profiles (user_id, self_reported_group, self_reported_rh, district, availability, outreach_consent, contact_window, max_contacts_per_month, pre_screening_result, policy_version, last_donation_date, last_contact_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'available', ?, '08:00–20:00 NPT', 2, ?, 'Donor pre-screen v1.0', NULL, NULL, ?, ?)`,
@@ -449,13 +450,15 @@ app.get("/api/policies", async (_req, res, next) => {
 
 app.get("/api/public/availability", async (req, res, next) => {
   try {
-    const district = text(req.query.district, 80);
+    const requestedDistrict = text(req.query.district, 80);
+    const district = requestedDistrict === "All districts" ? "" : requestedDistrict;
     const bloodGroup = text(req.query.bloodGroup, 4);
     const rhFactor = text(req.query.rhFactor, 2);
     const component = text(req.query.component, 80);
     const filters = ["f.verification_status = 'verified'", "f.public_availability = 1", "i.public_visible = 1"];
     const values: unknown[] = [];
-    if (district && district !== "All districts") { filters.push("f.district = ?"); values.push(district); }
+    if (district && !isNepalDistrict(district)) return apiError(res, 400, "Choose a valid Nepal district.");
+    if (district) { filters.push("f.district = ?"); values.push(district); }
     if (bloodGroup && validGroups.has(bloodGroup)) { filters.push("i.blood_group = ?"); values.push(bloodGroup); }
     if (rhFactor && validRh.has(rhFactor)) { filters.push("i.rh_factor = ?"); values.push(rhFactor); }
     if (component && validComponents.has(component)) { filters.push("i.component = ?"); values.push(component); }
@@ -512,7 +515,7 @@ app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "d
     const district = text(req.body?.district, 80);
     const neededBy = text(req.body?.neededBy, 40);
     const clientToken = text(req.body?.clientToken, 100);
-    if (!facilityId || !quantity || !patientInitials || !relationship || !validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !urgency || !district || !neededBy) return apiError(res, 400, "Complete all required request fields with a supported blood group and component.");
+    if (!facilityId || !quantity || !patientInitials || !relationship || !validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !urgency || !isNepalDistrict(district) || !neededBy) return apiError(res, 400, "Complete all required request fields with a valid Nepal district, supported blood group, and component.");
     const requiredBy = new Date(neededBy);
     if (Number.isNaN(requiredBy.getTime()) || requiredBy.getTime() <= Date.now()) return apiError(res, 400, "Choose a future needed-by date and time.");
     const facility = await one<{ id: number }>("SELECT id FROM facilities WHERE id = ? AND verification_status = 'verified' AND accepts_requests = 1 LIMIT 1", [facilityId]);

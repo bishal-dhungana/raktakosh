@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { availabilityState, canTransition, isStale } from "./domain";
+import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
+
+test("uses a complete canonical directory of Nepal districts", () => {
+  assert.equal(NEPAL_DISTRICTS.length, 77);
+  assert.equal(isNepalDistrict("Morang"), true);
+  assert.equal(isNepalDistrict("Kanchanpur"), true);
+  assert.equal(isNepalDistrict("Not a district"), false);
+});
 
 test("allows only safe request transitions", () => {
   assert.equal(canTransition("submitted", "under_review"), true);

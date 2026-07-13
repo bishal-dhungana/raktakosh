@@ -18,6 +18,8 @@ export const copy: Copy = {
     ne: "उपलब्धता संस्थाले रिपोर्ट गरेको र समय-छाप भएको हो। यो आरक्षण, अनुकूलता निर्णय वा ग्यारेन्टी होइन।"
   },
   district: { en: "District", ne: "जिल्ला" },
+  allDistricts: { en: "All districts", ne: "सबै जिल्ला" },
+  chooseDistrict: { en: "Choose a district", ne: "जिल्ला छान्नुहोस्" },
   bloodGroup: { en: "Blood group", ne: "रक्त समूह" },
   component: { en: "Component", ne: "अवयव" },
   search: { en: "Search verified facilities", ne: "प्रमाणित संस्था खोज्नुहोस्" },

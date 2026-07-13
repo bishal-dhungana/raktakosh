@@ -1,86 +1,240 @@
 # Raktakosh — Blood Coordination Platform
 
-**Version 1.0**
+Raktakosh is a full-stack platform for structured blood-service coordination in Nepal. It helps people find facility-reported availability, submit private requests to verified facilities, and follow an accountable workflow without exposing donor, patient, or staff data publicly.
 
-Raktakosh is a full-stack platform for structured blood-service coordination. It supports public availability discovery, private blood requests, facility inventory updates, controlled donor outreach, role-aware workspaces, and audited operational events.
+> **Important:** Raktakosh supports coordination only. It does not perform clinical matching, donor eligibility screening, blood testing, reservations, or transfusion decisions. Those responsibilities always remain with the participating blood-service facility.
 
-## Platform capabilities
+## Contents
 
-- Public search by district, blood group, Rh factor, and component.
-- Requester registration, sign-in, private request submission, and status tracking.
-- Donor registration, outreach consent, availability preferences, and invitation responses.
-- Facility inventory management with accountable adjustment history.
-- Guarded request-review workflow with internal notes and controlled outreach.
-- Administrator views for facilities, policy versions, and audit activity.
-- English/Nepali public experience and Asia/Kathmandu time display.
+- [What the platform provides](#what-the-platform-provides)
+- [User roles](#user-roles)
+- [How coordination works](#how-coordination-works)
+- [Technology and architecture](#technology-and-architecture)
+- [Nepal district coverage](#nepal-district-coverage)
+- [Run locally](#run-locally)
+- [Configuration](#configuration)
+- [Commands and verification](#commands-and-verification)
+- [Deployment](#deployment)
+- [Security and operational boundaries](#security-and-operational-boundaries)
+- [Documentation](#documentation)
 
-## Architecture
+## What the platform provides
 
-```text
-Vercel React frontend → Render Express API → TiDB Cloud / MySQL database
+- Public search of verified facility-reported inventory by district, blood group, Rh factor, and blood component.
+- A canonical directory of all **77 Nepal districts** for search, donor profiles, and private requests.
+- Private blood-request creation, status tracking, event timelines, and facility review workflows.
+- Donor registration, consent controls, availability preferences, and privacy-minimised outreach invitations.
+- Facility inventory updates with adjustment history, public-visibility controls, and stale-record indicators.
+- Role-aware workspaces for requesters, donors, inventory managers, reviewers, facility administrators, and platform administrators.
+- Account sessions, CSRF protection, rate limiting, audit events, and TOTP multi-factor authentication for staff accounts.
+- English/Nepali public-interface support and Nepal time-zone display.
+
+## User roles
+
+| Role | Main responsibilities |
+|---|---|
+| Guest | Search public, verified facility availability without creating an account. |
+| Requester | Submit private coordination requests and follow their status. |
+| Donor | Maintain consent and availability preferences; respond to controlled outreach invitations. |
+| Inventory manager | Record accountable inventory updates for an assigned verified facility. |
+| Reviewer | Review requests, add internal notes, update permitted states, and launch eligible donor outreach. |
+| Facility administrator | Oversee facility operations and request coordination. |
+| Platform administrator | Review facilities, staff account state, policy versions, and audit activity. |
+
+## How coordination works
+
+```mermaid
+flowchart LR
+    A[Search verified availability] --> B[Select a facility]
+    B --> C[Submit a private request]
+    C --> D[Facility review]
+    D --> E{Inventory path available?}
+    E -->|Yes| F[Facility coordinates next step]
+    E -->|No| G[Consent-based donor outreach]
+    G --> F
 ```
 
-The frontend receives only a public API URL. Database credentials are read only by the Render backend through protected environment variables.
+Public search results are facility-reported, timestamped information—not a promise that stock is currently available. A facility must confirm every next step.
 
-## Local development
+## Technology and architecture
 
-1. Install dependencies:
+| Layer | Technology | Purpose |
+|---|---|---|
+| Client | React, TypeScript, Vite | Public search, account access, role-aware workspaces, and responsive UI. |
+| API | Node.js, Express | Authentication, authorization, validation, workflows, rate limits, and audit events. |
+| Database | MySQL-compatible TiDB Cloud or MySQL | Facilities, users, sessions, inventory, requests, donor profiles, campaigns, notifications, and policies. |
+| Hosting | Vercel + Render | Static frontend delivery and managed API hosting. |
 
-   ```powershell
-   npm install
-   ```
+```mermaid
+flowchart TB
+    U[Guest, requester, donor, facility staff, administrator]
+    W[React + Vite frontend]
+    A[Express API]
+    D[(TiDB Cloud / MySQL)]
 
-2. Create local configuration:
+    U --> W
+    W -->|HTTPS JSON / multipart| A
+    A --> D
+```
 
-   ```powershell
-   Copy-Item .env.example .env
-   ```
+### Repository layout
 
-3. Set `DATABASE_URL` in `.env` to a non-production TiDB/MySQL database.
-4. Start both frontend and backend:
+| Path | Description |
+|---|---|
+| `src/` | React client, translations, shared types, and the canonical Nepal district directory. |
+| `server/` | Express API, database access, workflows, security helpers, and server tests. |
+| `scripts/` | Local port validation and database migration utilities. |
+| `docs/` | Architecture, deployment, installation, data model, module, testing, and product documentation. |
+| `render.yaml` | Render backend deployment blueprint. |
+| `vercel.json` | Vercel build configuration and frontend security headers. |
 
-   ```powershell
-   npm run dev
-   ```
+## Nepal district coverage
 
-Open `http://localhost:5173`.
+The public search defaults to **All districts** and users can select any of Nepal’s 77 districts. The same directory is used for donor registration and private blood requests, while the API validates submitted values before they are stored or used as filters.
 
-## Commands
+The district list has one source of truth: [`src/nepal-districts.ts`](src/nepal-districts.ts). Both the React client and Express API import it, preventing client/server drift.
+
+The development seed data intentionally includes example facilities and inventory in Morang only. That does **not** restrict district selection; it simply means other districts will have no public results until verified facilities publish inventory there.
+
+Read the complete guide in [District Coverage](docs/DISTRICT-COVERAGE.md).
+
+## Run locally
+
+### Prerequisites
+
+- Node.js 24 or later
+- npm 11 or later
+- A non-production TiDB Cloud or MySQL database
+
+### 1. Install dependencies
+
+```powershell
+npm install
+```
+
+### 2. Create local configuration
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Set `DATABASE_URL` in `.env` to a non-production database. For example:
+
+```text
+DATABASE_URL=mysql://USERNAME:PASSWORD@HOST:4000/DATABASE
+```
+
+If required by TiDB, add the CA certificate to `TIDB_CA_CERT`. Do not commit `.env`, database URLs, bootstrap credentials, or runtime secrets.
+
+### 3. Initialize the database
+
+For local development, `.env.example` sets `AUTO_MIGRATE=true`, so the API initializes the schema and development reference data when it starts. You can also run the migration directly:
+
+```powershell
+npm run db:migrate
+```
+
+### 4. Start the client and API
+
+```powershell
+npm run dev
+```
+
+| Service | Local address |
+|---|---|
+| Web app | `http://localhost:5173` |
+| API | `http://localhost:8787` |
+| API health check | `http://localhost:8787/api/health` |
+
+## Configuration
+
+Copy `.env.example` rather than creating configuration from scratch. The table below describes the primary variables.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | Yes | MySQL/TiDB connection URL. Use a least-privilege runtime account in production. |
+| `NODE_ENV` | Yes | Set to `development` locally and `production` on Render. |
+| `FRONTEND_ORIGIN` | Production | Exact deployed frontend origin used by CORS and cookie controls. |
+| `CSRF_SECRET` | Production | Long random secret used to validate state-changing browser requests. |
+| `MFA_ENCRYPTION_KEY` | Production | Base64-encoded 32-byte key used to encrypt staff TOTP secrets at rest. |
+| `DATABASE_SSL` | Recommended | Keep TLS enabled for hosted databases; set `false` only for a trusted local database. |
+| `TIDB_CA_CERT` | Optional | CA certificate content when the database service requires it. |
+| `SESSION_HOURS` | Optional | Authenticated session lifetime; defaults to 24 hours. |
+| `STALE_AFTER_HOURS` | Optional | Hours before public inventory is marked stale; defaults to 12. |
+| `DATABASE_POOL_SIZE` | Optional | Maximum database-pool connections; defaults to 8. |
+| `AUTO_MIGRATE` | Local only | Enables automatic schema initialization in development. Keep `false` in production. |
+| `BOOTSTRAP_*` | Optional | One-time local or deployment-time staff-account credentials. Keep them only in protected environment settings. |
+| `VITE_API_BASE_URL` | Frontend deployment | Public API base URL used by the Vite client. Never put secrets in a `VITE_` variable. |
+
+## Commands and verification
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` | Run the Vite client and Express API together. |
-| `npm test` | Run business-rule tests. |
-| `npm run build` | Type-check and build the frontend. |
-| `npm run serve` | Build and start the backend service locally. |
+| `npm run dev` | Start the Vite client and Express API together. |
+| `npm run dev:client` | Start the Vite client only. |
+| `npm run dev:server` | Start the Express API only. |
+| `npm run db:migrate` | Initialize or migrate the database schema and seed development reference data. |
+| `npm test` | Run business-rule and security tests. |
+| `npm run build` | Type-check the project and produce the Vite production bundle in `dist/`. |
+| `npm run serve` | Build the client and start the API for local production-style testing. |
+
+Before opening a pull request or deploying, run:
+
+```powershell
+npm test
+npm run build
+```
 
 ## Deployment
 
-The full Vercel + Render + TiDB setup is documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-
-Key environment variables:
+The intended production topology is:
 
 ```text
-# Render only
-DATABASE_URL=mysql://USERNAME:PASSWORD@HOST:4000/DATABASE
-FRONTEND_ORIGIN=https://your-vercel-project.vercel.app
-NODE_ENV=production
-
-# Vercel only
-VITE_API_BASE_URL=https://your-render-service.onrender.com
+Vercel React frontend → Render Express API → TiDB Cloud / MySQL
 ```
+
+1. Run migrations with a dedicated migration-only database account.
+2. Configure the Render API with protected runtime database credentials and security secrets.
+3. Set `FRONTEND_ORIGIN` to the exact Vercel URL.
+4. Configure `VITE_API_BASE_URL` in Vercel for Production, Preview, and Development.
+5. Deploy the API, then verify `/api/health` reports `status: ok` and `database: connected`.
+6. Deploy the Vercel frontend and enroll staff in TOTP MFA on first sign-in.
+
+For exact environment-variable guidance, privileges, and deployment order, use the [Deployment Guide](docs/DEPLOYMENT.md).
+
+## Security and operational boundaries
+
+- Database credentials remain on the API host; the browser receives only the API URL.
+- Production sessions use secure, HTTP-only cookies and state-changing requests require a CSRF token.
+- Server-side role checks protect every private workflow; UI visibility is not treated as authorization.
+- Authentication is rate-limited; sessions and temporary authentication challenges are stored as hashes.
+- Staff use TOTP multi-factor authentication, with encrypted secrets at rest.
+- Inventory changes, request workflow events, staff changes, and public searches create audit records.
+- Production document uploads are intentionally disabled until private object storage, malware scanning, signed downloads, retention rules, and access logging are configured.
+- Do not use the platform as an emergency response service or a substitute for direct clinical communication with a blood-service facility.
 
 ## Documentation
 
-- [Installation guide](docs/INSTALLATION.md)
-- [Deployment guide](docs/DEPLOYMENT.md)
-- [System architecture](docs/ARCHITECTURE.md)
-- [Entity relationship diagram](docs/ERD.md)
-- [Module catalogue](docs/MODULES.md)
-- [Testing report](docs/TESTING-REPORT.md)
-- [Viva guide](docs/VIVA-GUIDE.md)
-- [Product requirements document](docs/Raktakosh-PRD-and-MVP.md)
+| Document | Description |
+|---|---|
+| [Installation guide](docs/INSTALLATION.md) | Local environment prerequisites and setup. |
+| [Deployment guide](docs/DEPLOYMENT.md) | Vercel, Render, TiDB, secrets, migration, and production checklist. |
+| [System architecture](docs/ARCHITECTURE.md) | Application layers and security boundary. |
+| [Entity relationship diagram](docs/ERD.md) | Data model overview. |
+| [Module catalogue](docs/MODULES.md) | Platform modules and their users. |
+| [District coverage](docs/DISTRICT-COVERAGE.md) | Nepal-wide district directory and data-coverage behavior. |
+| [Testing report](docs/TESTING-REPORT.md) | Automated checks and deployment smoke tests. |
+| [Viva guide](docs/VIVA-GUIDE.md) | Suggested project demonstration flow. |
+| [Product requirements document](docs/Raktakosh-PRD-and-MVP.md) | Product scope, workflows, requirements, and roadmap. |
 
-## Functional boundary
+## Contributing
 
-Raktakosh coordinates information and workflow. Clinical matching, donor medical eligibility, blood testing, reservation, and transfusion decisions remain the responsibility of participating blood-service facilities.
+1. Create a branch from the current development branch.
+2. Keep changes focused and avoid introducing sensitive values into tracked files.
+3. Add or update tests when behavior changes.
+4. Run `npm test` and `npm run build` before submitting the change.
+5. Update the relevant document in `docs/` when the user-facing behavior, deployment process, or data model changes.
+
+---
+
+Built to make the path from a blood-service search to a verified facility handoff clearer, safer, and more accountable.

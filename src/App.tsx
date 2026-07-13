@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "rea
 import QRCode from "qrcode";
 import { ApiError, api, toQuery } from "./api";
 import { t } from "./i18n";
+import { NEPAL_DISTRICTS } from "./nepal-districts";
 import type {
   AdminOverview,
   AvailabilityState,
@@ -18,7 +19,6 @@ import type {
 
 const groups = ["A", "B", "AB", "O"];
 const components = ["Whole blood", "Packed red cells", "Platelets", "Plasma"];
-const districts = ["Morang"];
 
 const statusLabels: Record<RequestStatus, string> = {
   draft: "Draft",
@@ -124,7 +124,7 @@ function App() {
   const [notice, setNotice] = useState("");
   const [availability, setAvailability] = useState<PublicAvailability[]>([]);
   const [searching, setSearching] = useState(true);
-  const [searchFilters, setSearchFilters] = useState({ district: "Morang", bloodGroup: "", rhFactor: "+", component: "" });
+  const [searchFilters, setSearchFilters] = useState({ district: "", bloodGroup: "", rhFactor: "+", component: "" });
 
   async function loadAvailability(filters = searchFilters) {
     setSearching(true);
@@ -241,7 +241,7 @@ function Home({
       <section className="hero" aria-labelledby="hero-title">
         <div className="hero-ink">
           <div className="hero-copy">
-            <Pill className="version-pill"><span className="live-mark" /> MORANG NETWORK · VERSION 1.0</Pill>
+            <Pill className="version-pill"><span className="live-mark" /> NEPAL NETWORK · VERSION 1.0</Pill>
             <h1 id="hero-title">{t(locale, "verifiedStep")}</h1>
             <p>{t(locale, "heroBody")}</p>
             <div className="hero-actions">
@@ -268,7 +268,7 @@ function Home({
         <Card className="search-panel">
           <form onSubmit={(event) => { event.preventDefault(); onSearch(); }}>
             <div className="search-grid">
-              <label><span>{t(locale, "district")}</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}>{districts.map((district) => <option key={district}>{district}</option>)}</select></label>
+              <label><span>{t(locale, "district")}</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}><option value="">{t(locale, "allDistricts")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
               <label><span>{t(locale, "bloodGroup")}</span><select value={filters.bloodGroup} onChange={(event) => setFilters({ ...filters, bloodGroup: event.target.value })}><option value="">Any group</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label>
               <label><span>Rh factor</span><select value={filters.rhFactor} onChange={(event) => setFilters({ ...filters, rhFactor: event.target.value })}><option value="">Any</option><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label>
               <label><span>{t(locale, "component")}</span><select value={filters.component} onChange={(event) => setFilters({ ...filters, component: event.target.value })}><option value="">Any component</option>{components.map((component) => <option key={component}>{component}</option>)}</select></label>
@@ -318,7 +318,7 @@ function AvailabilityCard({ item, locale }: { item: PublicAvailability; locale: 
 
 function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
   const [mode, setMode] = useState<"signin" | "register">("signin");
-  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "requester", bloodGroup: "", rhFactor: "+", district: "Morang", outreachConsent: false });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "requester", bloodGroup: "", rhFactor: "+", district: "", outreachConsent: false });
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
   const [mfaStage, setMfaStage] = useState<"credentials" | "enroll" | "verify">("credentials");
@@ -396,7 +396,7 @@ function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: 
           <label><span>Email address</span><input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required autoComplete="email" /></label>
           <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={mode === "register" ? 12 : undefined} required autoComplete={mode === "signin" ? "current-password" : "new-password"} /></label>
           {mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
-          {mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
+          {mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
         {error && <Notice tone="warning">{error}</Notice>}
           <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
         </form>
@@ -428,7 +428,7 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
   const [document, setDocument] = useState<File | null>(null);
   const [documentUploadsEnabled, setDocumentUploadsEnabled] = useState(false);
   const clientToken = useRef(typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-  const [form, setForm] = useState({ facilityId: "", patientInitials: "", relationship: "Family member", bloodGroup: "", rhFactor: "+", component: "Packed red cells", quantity: "1", urgency: "Urgent", district: "Morang", neededBy: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) });
+  const [form, setForm] = useState({ facilityId: "", patientInitials: "", relationship: "Family member", bloodGroup: "", rhFactor: "+", component: "Packed red cells", quantity: "1", urgency: "Urgent", district: "", neededBy: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) });
 
   async function load() {
     setLoading(true);
@@ -473,6 +473,7 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
           <label><span>Component</span><select value={form.component} onChange={(event) => setForm({ ...form, component: event.target.value })}>{components.map((component) => <option key={component}>{component}</option>)}</select></label>
           <label><span>Quantity requested</span><input type="number" min="1" max="20" value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} required /></label>
           <label><span>Operational urgency</span><select value={form.urgency} onChange={(event) => setForm({ ...form, urgency: event.target.value })}><option>Routine</option><option>Urgent</option><option>Critical</option></select></label>
+          <label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
           <label><span>Needed by (NPT)</span><input type="datetime-local" value={form.neededBy} onChange={(event) => setForm({ ...form, neededBy: event.target.value })} required /></label>
           {documentUploadsEnabled ? <label className="full-field file-field"><span>Supporting document <i>optional when required by the facility</i></span><input type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setDocument(event.target.files?.[0] ?? null)} /><small>PDF, JPG, or PNG up to 5 MB. Files are available only to authorized reviewers while validation is pending.</small></label> : <div className="full-field upload-security-note"><b>Supporting documents are handled directly by the selected facility.</b><span>Secure online upload will only be enabled after private storage and document validation are configured.</span></div>}
           <div className="form-action full-field"><button className="button button-signal" type="submit" disabled={working}>{working ? "Submitting…" : "Submit for facility review →"}</button></div>
