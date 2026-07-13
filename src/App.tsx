@@ -426,17 +426,19 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [document, setDocument] = useState<File | null>(null);
+  const [documentUploadsEnabled, setDocumentUploadsEnabled] = useState(false);
   const clientToken = useRef(typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
   const [form, setForm] = useState({ facilityId: "", patientInitials: "", relationship: "Family member", bloodGroup: "", rhFactor: "+", component: "Packed red cells", quantity: "1", urgency: "Urgent", district: "Morang", neededBy: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) });
 
   async function load() {
     setLoading(true);
     try {
-      const [requestData, facilityData] = await Promise.all([
+      const [requestData, facilityData, platformConfig] = await Promise.all([
         api<{ requests: BloodRequest[] }>("/api/requests"),
-        api<{ facilities: Array<{ id: number; name: string; district: string }> }>("/api/public/facilities")
+        api<{ facilities: Array<{ id: number; name: string; district: string }> }>("/api/public/facilities"),
+        api<{ documentUploadsEnabled: boolean }>("/api/public/config")
       ]);
-      setRequests(requestData.requests); setFacilities(facilityData.facilities);
+      setRequests(requestData.requests); setFacilities(facilityData.facilities); setDocumentUploadsEnabled(platformConfig.documentUploadsEnabled);
       setForm((current) => current.facilityId ? current : { ...current, facilityId: String(facilityData.facilities[0]?.id ?? "") });
     } catch (error) { onMessage(error instanceof Error ? error.message : "Could not load your requests."); }
     finally { setLoading(false); }
@@ -447,7 +449,7 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
     event.preventDefault(); setWorking(true);
     try {
       const result = await api<{ request: BloodRequest }>("/api/requests", { method: "POST", body: JSON.stringify({ ...form, facilityId: Number(form.facilityId), quantity: Number(form.quantity), neededBy: new Date(form.neededBy).toISOString(), clientToken: clientToken.current }) });
-      if (document) {
+      if (document && documentUploadsEnabled) {
         const body = new FormData(); body.append("document", document);
         await api(`/api/requests/${result.request.id}/document`, { method: "POST", body });
       }
@@ -472,7 +474,7 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
           <label><span>Quantity requested</span><input type="number" min="1" max="20" value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} required /></label>
           <label><span>Operational urgency</span><select value={form.urgency} onChange={(event) => setForm({ ...form, urgency: event.target.value })}><option>Routine</option><option>Urgent</option><option>Critical</option></select></label>
           <label><span>Needed by (NPT)</span><input type="datetime-local" value={form.neededBy} onChange={(event) => setForm({ ...form, neededBy: event.target.value })} required /></label>
-          <label className="full-field file-field"><span>Supporting document <i>optional when required by the facility</i></span><input type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setDocument(event.target.files?.[0] ?? null)} /><small>PDF, JPG, or PNG up to 5 MB. Files are available only to authorized reviewers while validation is pending.</small></label>
+          {documentUploadsEnabled ? <label className="full-field file-field"><span>Supporting document <i>optional when required by the facility</i></span><input type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setDocument(event.target.files?.[0] ?? null)} /><small>PDF, JPG, or PNG up to 5 MB. Files are available only to authorized reviewers while validation is pending.</small></label> : <div className="full-field upload-security-note"><b>Supporting documents are handled directly by the selected facility.</b><span>Secure online upload will only be enabled after private storage and document validation are configured.</span></div>}
           <div className="form-action full-field"><button className="button button-signal" type="submit" disabled={working}>{working ? "Submitting…" : "Submit for facility review →"}</button></div>
         </form>
       </Card>

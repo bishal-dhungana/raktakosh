@@ -478,6 +478,10 @@ app.get("/api/public/facilities", async (_req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.get("/api/public/config", (_req, res) => {
+  res.json({ documentUploadsEnabled: documentStorageEnabled });
+});
+
 app.get("/api/requests", requireAuth, async (req: AuthRequest, res, next) => {
   try {
     const viewer = req.viewer!;
