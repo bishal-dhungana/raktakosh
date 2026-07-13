@@ -5,7 +5,13 @@ export class ApiError extends Error {
   }
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+/**
+ * Hosted builds use the Render API by default. VITE_API_BASE_URL remains the
+ * deployment override, while local development intentionally keeps relative
+ * requests so the Vite development proxy can be used when configured.
+ */
+const deployedApiUrl = "https://raktakoshv1.onrender.com";
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? deployedApiUrl : "")).replace(/\/$/, "");
 
 export async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
