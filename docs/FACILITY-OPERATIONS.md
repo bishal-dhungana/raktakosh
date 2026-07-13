@@ -6,7 +6,7 @@ The Blood Bank dashboard gives verified facility staff a single, role-scoped vie
 
 ## Dedicated Blood Bank sign-in
 
-Use **Blood Bank login** from the public header. It calls the dedicated staff sign-in endpoint, accepts only an already-issued `inventory_manager`, `reviewer`, or `facility_admin` account, and requires TOTP MFA. Public requester/donor registration cannot create a Blood Bank staff account.
+Use **Blood Bank login** from the public header. It calls the dedicated staff sign-in endpoint and accepts only an already-issued `inventory_manager`, `reviewer`, or `facility_admin` account. Public requester/donor registration cannot create a Blood Bank staff account.
 
 ## Access model
 

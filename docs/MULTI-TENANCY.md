@@ -17,9 +17,8 @@ The temporary password is hashed immediately and is never returned by the API or
 ## First Blood Bank Admin sign-in
 
 1. The branch opens **Blood Bank portal** and signs in with the issued email and temporary password.
-2. The admin completes required TOTP multi-factor enrollment or verification.
-3. The system blocks tenant data and all operational actions until the temporary password is replaced.
-4. Password replacement rotates the active session and records an audit event.
+2. The system blocks tenant data and all operational actions until the temporary password is replaced.
+3. Password replacement rotates the active session and records an audit event.
 
 ## Isolation and access boundaries
 
@@ -34,7 +33,7 @@ Super Admin may activate a branch for operations during provisioning. Activating
 
 ## Live verification
 
-The repository includes a guarded end-to-end verifier. It creates temporary Super Admin and Blood Bank tenant records, verifies MFA enrollment, provisioning, temporary-password lockout, password replacement, session rotation, and facility-scoped dashboard access, then removes its temporary records.
+The repository includes a guarded end-to-end verifier. It creates temporary Super Admin and Blood Bank tenant records, verifies provisioning, temporary-password lockout, password replacement, session rotation, and facility-scoped dashboard access, then removes its temporary records.
 
 It runs only when explicitly enabled:
 

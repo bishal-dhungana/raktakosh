@@ -100,14 +100,7 @@ export interface AuthUser {
   passwordHash: string;
   role: UserRole;
   accountStatus: "active" | "suspended";
-  mfaSecretEncrypted: string | null;
-  mfaEnabledAt: string | null;
   passwordChangeRequired: boolean;
-}
-
-export interface AuthChallenge {
-  userId: number;
-  purpose: "mfa_enroll" | "mfa_verify";
 }
 
 export function verifyPassword(password: string, stored: string): boolean {
@@ -161,7 +154,6 @@ export function verifyCsrfToken(token: string, submittedToken: string | undefine
 export async function getAuthUserByEmail(email: string): Promise<AuthUser | undefined> {
   return one<AuthUser>(
     `SELECT id, email, password_hash as passwordHash, role, account_status as accountStatus,
-            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt,
             CASE WHEN password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
      FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`,
     [email]
@@ -171,37 +163,10 @@ export async function getAuthUserByEmail(email: string): Promise<AuthUser | unde
 export async function getAuthUserById(id: number): Promise<AuthUser | undefined> {
   return one<AuthUser>(
     `SELECT id, email, password_hash as passwordHash, role, account_status as accountStatus,
-            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt,
             CASE WHEN password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
      FROM users WHERE id = ? LIMIT 1`,
     [id]
   );
-}
-
-export async function createAuthChallenge(userId: number, purpose: AuthChallenge["purpose"]): Promise<string> {
-  const token = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  await execute("INSERT INTO auth_challenges (token_hash, user_id, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?)", [opaqueHash(token), userId, purpose, expiresAt, now()]);
-  return token;
-}
-
-export async function getAuthChallenge(token: string, purpose: AuthChallenge["purpose"]): Promise<AuthChallenge | undefined> {
-  return one<AuthChallenge>(
-    "SELECT user_id as userId, purpose FROM auth_challenges WHERE token_hash = ? AND purpose = ? AND expires_at > ? LIMIT 1",
-    [opaqueHash(token), purpose, now()]
-  );
-}
-
-export async function consumeAuthChallenge(token: string): Promise<void> {
-  await execute("DELETE FROM auth_challenges WHERE token_hash = ?", [opaqueHash(token)]);
-}
-
-export async function setMfaSecret(userId: number, encryptedSecret: string): Promise<void> {
-  await execute("UPDATE users SET mfa_secret_encrypted = ?, mfa_enabled_at = NULL WHERE id = ?", [encryptedSecret, userId]);
-}
-
-export async function enableMfa(userId: number): Promise<void> {
-  await execute("UPDATE users SET mfa_enabled_at = ? WHERE id = ?", [now(), userId]);
 }
 
 type CurrentUserRow = Omit<CurrentUser, "passwordChangeRequired"> & { passwordChangeRequired: number };
@@ -247,8 +212,6 @@ const schema = [
     password_hash VARCHAR(255) NOT NULL,
     verified_at VARCHAR(40) NULL,
     account_status VARCHAR(20) NOT NULL DEFAULT 'active',
-    mfa_secret_encrypted TEXT NULL,
-    mfa_enabled_at VARCHAR(40) NULL,
     password_change_required_at VARCHAR(40) NULL,
     password_changed_at VARCHAR(40) NULL,
     created_at VARCHAR(40) NOT NULL,
@@ -265,17 +228,6 @@ const schema = [
     UNIQUE KEY uq_sessions_token (token),
     KEY idx_sessions_expiry (expires_at),
     CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  )`,
-  `CREATE TABLE IF NOT EXISTS auth_challenges (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    token_hash VARCHAR(128) NOT NULL,
-    user_id BIGINT UNSIGNED NOT NULL,
-    purpose VARCHAR(40) NOT NULL,
-    expires_at VARCHAR(40) NOT NULL,
-    created_at VARCHAR(40) NOT NULL,
-    UNIQUE KEY uq_auth_challenge_token (token_hash),
-    KEY idx_auth_challenge_expiry (expires_at),
-    CONSTRAINT fk_auth_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS inventory_records (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -578,25 +530,6 @@ async function applySecurityMigrations(): Promise<void> {
     if (!(await columnExists("users", "account_status"))) {
       await execute("ALTER TABLE users ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active' AFTER verified_at");
     }
-    if (!(await columnExists("users", "mfa_secret_encrypted"))) {
-      await execute("ALTER TABLE users ADD COLUMN mfa_secret_encrypted TEXT NULL AFTER account_status");
-    }
-    if (!(await columnExists("users", "mfa_enabled_at"))) {
-      await execute("ALTER TABLE users ADD COLUMN mfa_enabled_at VARCHAR(40) NULL AFTER mfa_secret_encrypted");
-    }
-    await execute(
-      `CREATE TABLE IF NOT EXISTS auth_challenges (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        token_hash VARCHAR(128) NOT NULL,
-        user_id BIGINT UNSIGNED NOT NULL,
-        purpose VARCHAR(40) NOT NULL,
-        expires_at VARCHAR(40) NOT NULL,
-        created_at VARCHAR(40) NOT NULL,
-        UNIQUE KEY uq_auth_challenge_token (token_hash),
-        KEY idx_auth_challenge_expiry (expires_at),
-        CONSTRAINT fk_auth_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )`
-    );
     // Earlier releases stored raw session tokens. Invalidate them once so only hashes remain after migration.
     await execute("DELETE FROM sessions");
     await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [migrationId, now()]);
@@ -676,7 +609,7 @@ async function applySecurityMigrations(): Promise<void> {
   const tenantProvisioningApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [tenantProvisioningMigrationId]);
   if (!tenantProvisioningApplied) {
     if (!(await columnExists("users", "password_change_required_at"))) {
-      await execute("ALTER TABLE users ADD COLUMN password_change_required_at VARCHAR(40) NULL AFTER mfa_enabled_at");
+      await execute("ALTER TABLE users ADD COLUMN password_change_required_at VARCHAR(40) NULL AFTER account_status");
     }
     if (!(await columnExists("users", "password_changed_at"))) {
       await execute("ALTER TABLE users ADD COLUMN password_changed_at VARCHAR(40) NULL AFTER password_change_required_at");

@@ -29,7 +29,6 @@ STALE_AFTER_HOURS=12
 DATABASE_POOL_SIZE=8
 AUTO_MIGRATE=false
 CSRF_SECRET=replace-with-a-long-random-secret
-MFA_ENCRYPTION_KEY=replace-with-a-base64-encoded-32-byte-key
 DOCUMENT_STORAGE_MODE=r2
 R2_BUCKET=raktakosh
 R2_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com
@@ -88,7 +87,7 @@ Use:
 3. Push code to GitHub and deploy the backend.
 4. Verify Render `/api/health` reports a connected database.
 5. Add `VITE_API_BASE_URL` to Vercel and redeploy it.
-6. Enroll each staff account in TOTP MFA at first sign-in.
+6. Have each issued staff account replace its temporary password at first sign-in.
 
 ## Security checklist
 

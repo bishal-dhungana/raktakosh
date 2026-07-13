@@ -184,15 +184,6 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .account-form { grid-template-columns: 1fr 1fr; }
 .account-form > .button { grid-column: 1 / -1; }
 .password-guidance { display: block; margin-top: -4px; color: var(--ink-soft); font-size: 10px; line-height: 1.45; }
-.mfa-dialog { width: min(640px, 100%); }
-.mfa-setup { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 22px; align-items: center; margin: 24px 0; padding: 18px; border: 1px solid var(--line); background: #fffdf9; }
-.mfa-setup img { display: block; width: 220px; height: 220px; image-rendering: pixelated; }
-.mfa-setup div { display: grid; gap: 9px; min-width: 0; }
-.mfa-setup span { color: var(--ink-soft); font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
-.mfa-setup code { overflow-wrap: anywhere; color: var(--ink); font-size: 14px; letter-spacing: 0.08em; }
-.mfa-setup small { color: var(--ink-soft); font-size: 10px; }
-.mfa-form { grid-template-columns: minmax(0,1fr) auto; }
-.mfa-form input { font-family: var(--mono); font-size: 18px; letter-spacing: 0.22em; }
 
 .dashboard-shell { padding: 62px 0 100px; }
 .dashboard-topline { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin-bottom: 33px; }
@@ -440,8 +431,6 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .site-footer > span { text-align: left; }
   .auth-dialog { padding: 31px 22px; box-shadow: 9px 9px 0 var(--signal); }
   .access-role-grid, .auth-form, .account-form { grid-template-columns: 1fr; }
-  .mfa-setup { grid-template-columns: 1fr; justify-items: center; }
-  .mfa-setup div { width: 100%; }
   .auth-form .button { width: 100%; }
   .dashboard-shell { padding: 36px 0 60px; }
   .dashboard-heading { align-items: flex-start; flex-direction: column; }

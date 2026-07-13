@@ -25,14 +25,11 @@ import type {
 import {
   SESSION_HOURS,
   STALE_AFTER_HOURS,
-  consumeAuthChallenge,
-  createAuthChallenge,
   createNotification,
   createSession,
   deleteSession,
   deleteUserSessions,
   execute,
-  getAuthChallenge,
   getAuthUserByEmail,
   getAuthUserById,
   getCurrentUser,
@@ -41,16 +38,13 @@ import {
   initializeDatabase,
   one,
   query,
-  setMfaSecret,
   csrfTokenFor,
   transaction,
-  enableMfa,
   verifyCsrfToken,
   verifyPassword,
   writeAudit
 } from "./db";
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
-import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
 import { canViewFacilityCasework, isBloodBankStaff } from "./facility-access";
 import {
   DONOR_SCREENING_QUESTIONS,
@@ -186,10 +180,6 @@ function allowedOrigins(): Set<string> {
 
 function getToken(req: Request): string | undefined {
   return typeof req.cookies?.[sessionCookieName] === "string" ? req.cookies[sessionCookieName] : undefined;
-}
-
-function requiresMfa(role: UserRole): boolean {
-  return role === "platform_admin" || facilityRoles.has(role);
 }
 
 async function hasVerifiedFacility(viewer: CurrentUser): Promise<boolean> {
@@ -506,12 +496,6 @@ async function completeLogin(req: Request, res: Response, staffOnly: boolean): P
     await writeAudit(user.id, "blood_bank_login_denied", "account", user.id, { source: clientIp(req), reason: "not_blood_bank_staff" });
     return apiError(res, 403, "This is the Blood Bank staff sign-in. Use the standard account sign-in for this account.");
   }
-  if (requiresMfa(user.role)) {
-    const purpose = user.mfaEnabledAt && user.mfaSecretEncrypted ? "mfa_verify" : "mfa_enroll";
-    const challengeToken = await createAuthChallenge(user.id, purpose);
-    res.json({ mfaRequired: purpose === "mfa_verify", mfaEnrollmentRequired: purpose === "mfa_enroll", mfaChallengeToken: challengeToken });
-    return;
-  }
   const session = await createSession(user.id);
   const viewer = await getCurrentUser(session.token);
   await writeAudit(user.id, staffOnly ? "blood_bank_login_succeeded" : "login_succeeded", "account", user.id, { source: clientIp(req) });
@@ -528,51 +512,6 @@ app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
 app.post("/api/auth/blood-bank/login", authRateLimit, async (req, res, next) => {
   try {
     await completeLogin(req, res, true);
-  } catch (error) { next(error); }
-});
-
-app.post("/api/auth/mfa/enroll/start", authRateLimit, async (req, res, next) => {
-  try {
-    const challengeToken = text(req.body?.challengeToken, 128);
-    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "mfa_enroll") : undefined;
-    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
-    if (!challenge || !user || user.accountStatus !== "active" || !requiresMfa(user.role)) return apiError(res, 401, "The secure sign-in step has expired. Start again.");
-    const secret = generateTotpSecret();
-    await setMfaSecret(user.id, encryptMfaSecret(secret));
-    res.json({ secret, otpauthUri: totpUri(user.email, secret) });
-  } catch (error) { next(error); }
-});
-
-app.post("/api/auth/mfa/enroll/confirm", authRateLimit, async (req, res, next) => {
-  try {
-    const challengeToken = text(req.body?.challengeToken, 128);
-    const code = text(req.body?.code, 8);
-    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "mfa_enroll") : undefined;
-    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
-    if (!challenge || !user || !user.mfaSecretEncrypted || !verifyTotp(decryptMfaSecret(user.mfaSecretEncrypted), code)) return apiError(res, 401, "The authenticator code is not correct or has expired.");
-    await enableMfa(user.id);
-    await consumeAuthChallenge(challengeToken);
-    const session = await createSession(user.id);
-    const viewer = await getCurrentUser(session.token);
-    await writeAudit(user.id, "mfa_enrolled", "account", user.id, { source: clientIp(req) });
-    res.cookie(sessionCookieName, session.token, cookieOptions());
-    res.json({ user: viewer, csrfToken: session.csrfToken });
-  } catch (error) { next(error); }
-});
-
-app.post("/api/auth/mfa/verify", authRateLimit, async (req, res, next) => {
-  try {
-    const challengeToken = text(req.body?.challengeToken, 128);
-    const code = text(req.body?.code, 8);
-    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "mfa_verify") : undefined;
-    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
-    if (!challenge || !user || !user.mfaSecretEncrypted || !user.mfaEnabledAt || !verifyTotp(decryptMfaSecret(user.mfaSecretEncrypted), code)) return apiError(res, 401, "The authenticator code is not correct or has expired.");
-    await consumeAuthChallenge(challengeToken);
-    const session = await createSession(user.id);
-    const viewer = await getCurrentUser(session.token);
-    await writeAudit(user.id, "mfa_verified", "account", user.id, { source: clientIp(req) });
-    res.cookie(sessionCookieName, session.token, cookieOptions());
-    res.json({ user: viewer, csrfToken: session.csrfToken });
   } catch (error) { next(error); }
 });
 
@@ -1302,15 +1241,14 @@ app.get("/api/admin/overview", requireAuth, requireRoles("platform_admin"), asyn
       `SELECT a.id, a.action, a.entity_type as entityType, a.entity_id as entityId, COALESCE(u.name, 'System') as actorName, a.created_at as createdAt
        FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id ORDER BY a.created_at DESC, a.id DESC LIMIT 20`
     );
-    const staff = await query<Omit<AdminOverview["staff"][number], "mfaEnabled" | "passwordChangeRequired"> & { mfaEnabled: number; passwordChangeRequired: number }>(
+    const staff = await query<Omit<AdminOverview["staff"][number], "passwordChangeRequired"> & { passwordChangeRequired: number }>(
       `SELECT u.id, u.name, u.email, u.role, u.account_status as accountStatus, f.name as facilityName,
-              CASE WHEN u.mfa_enabled_at IS NULL THEN 0 ELSE 1 END as mfaEnabled,
               CASE WHEN u.password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
        FROM users u LEFT JOIN facilities f ON f.id = u.facility_id
        WHERE u.role IN ('platform_admin', 'facility_admin', 'reviewer', 'inventory_manager')
        ORDER BY u.role, u.name`
     );
-    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, mfaEnabled: Boolean(member.mfaEnabled), passwordChangeRequired: Boolean(member.passwordChangeRequired) })) } satisfies AdminOverview });
+    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, passwordChangeRequired: Boolean(member.passwordChangeRequired) })) } satisfies AdminOverview });
   } catch (error) { next(error); }
 });
 
@@ -1367,7 +1305,7 @@ app.patch("/api/admin/staff/:id/status", requireAuth, requireCsrf, requireRoles(
     if (!staffId || !["active", "suspended"].includes(accountStatus)) return apiError(res, 400, "Choose an active or suspended account state.");
     if (staffId === req.viewer!.id) return apiError(res, 400, "You cannot change your own administrator access from this session.");
     const staff = await getAuthUserById(staffId);
-    if (!staff || !requiresMfa(staff.role)) return apiError(res, 404, "Staff account not found.");
+    if (!staff || !(staff.role === "platform_admin" || isBloodBankStaff(staff.role))) return apiError(res, 404, "Staff account not found.");
     await execute("UPDATE users SET account_status = ? WHERE id = ?", [accountStatus, staffId]);
     if (accountStatus === "suspended") await deleteUserSessions(staffId);
     await writeAudit(req.viewer!.id, "staff_account_status_changed", "user", staffId, { accountStatus });

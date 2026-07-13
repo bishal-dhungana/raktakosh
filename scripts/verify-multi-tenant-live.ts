@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { execute, getPool, hashPassword, one, query, verifyPassword } from "../server/db";
 
 if (process.env.RUN_LIVE_TENANT_TEST !== "true") {
@@ -20,31 +20,6 @@ const replacementPassword = "BranchOwn#2026!";
 
 type Session = { cookie: string; csrfToken: string; user: { passwordChangeRequired: boolean } };
 
-function totpCode(secret: string): string {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const normalized = secret.replace(/[\s=-]/g, "").toUpperCase();
-  let bits = 0;
-  let current = 0;
-  const bytes: number[] = [];
-  for (const character of normalized) {
-    const index = alphabet.indexOf(character);
-    if (index < 0) throw new Error("Invalid test TOTP secret.");
-    current = (current << 5) | index;
-    bits += 5;
-    if (bits >= 8) {
-      bytes.push((current >>> (bits - 8)) & 255);
-      bits -= 8;
-    }
-  }
-  const counter = Math.floor(Date.now() / 30_000);
-  const counterBuffer = Buffer.alloc(8);
-  counterBuffer.writeBigUInt64BE(BigInt(counter));
-  const digest = createHmac("sha1", Buffer.from(bytes)).update(counterBuffer).digest();
-  const offset = digest[digest.length - 1] & 15;
-  const value = ((digest[offset] & 127) << 24) | (digest[offset + 1] << 16) | (digest[offset + 2] << 8) | digest[offset + 3];
-  return String(value % 1_000_000).padStart(6, "0");
-}
-
 async function request<T>(path: string, init: RequestInit = {}): Promise<{ body: T; response: Response }> {
   const headers = new Headers(init.headers);
   headers.set("Origin", origin);
@@ -55,14 +30,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<{ body:
   return { body, response };
 }
 
-async function loginWithMfa(email: string, password: string, staffOnly = false): Promise<Session> {
-  const login = await request<{ mfaEnrollmentRequired?: boolean; mfaChallengeToken?: string }>(staffOnly ? "/api/auth/blood-bank/login" : "/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-  if (!login.body.mfaEnrollmentRequired || !login.body.mfaChallengeToken) throw new Error("Expected first-sign-in MFA enrollment.");
-  const setup = await request<{ secret: string }>("/api/auth/mfa/enroll/start", { method: "POST", body: JSON.stringify({ challengeToken: login.body.mfaChallengeToken }) });
-  const confirmation = await request<{ user: { passwordChangeRequired: boolean }; csrfToken: string }>("/api/auth/mfa/enroll/confirm", { method: "POST", body: JSON.stringify({ challengeToken: login.body.mfaChallengeToken, code: totpCode(setup.body.secret) }) });
-  const cookie = confirmation.response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (!cookie || !confirmation.body.csrfToken) throw new Error("MFA confirmation did not establish a session.");
-  return { cookie, csrfToken: confirmation.body.csrfToken, user: confirmation.body.user };
+async function login(email: string, password: string, staffOnly = false): Promise<Session> {
+  const login = await request<{ user: { passwordChangeRequired: boolean }; csrfToken: string }>(staffOnly ? "/api/auth/blood-bank/login" : "/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+  const cookie = login.response.headers.get("set-cookie")?.split(";", 1)[0];
+  if (!cookie || !login.body.csrfToken) throw new Error("Password sign-in did not establish a session.");
+  return { cookie, csrfToken: login.body.csrfToken, user: login.body.user };
 }
 
 async function cleanup(): Promise<void> {
@@ -85,7 +57,7 @@ try {
     [superEmail, hashPassword(superPassword), createdAt, createdAt, createdAt]
   );
 
-  const superSession = await loginWithMfa(superEmail, superPassword);
+  const superSession = await login(superEmail, superPassword);
   if (superSession.user.passwordChangeRequired) throw new Error("Temporary QA Super Admin should not require a password change.");
   const createdTenant = await request<{ tenant: { facilityId: number; facilityName: string; adminEmail: string } }>("/api/admin/tenants", {
     method: "POST",
@@ -108,7 +80,7 @@ try {
   });
   if (createdTenant.body.tenant.facilityName !== facilityName || createdTenant.body.tenant.adminEmail !== branchEmail) throw new Error("Tenant provisioning returned an unexpected tenant.");
 
-  const branchSession = await loginWithMfa(branchEmail, temporaryPassword, true);
+  const branchSession = await login(branchEmail, temporaryPassword, true);
   if (!branchSession.user.passwordChangeRequired) throw new Error("Provisioned branch admin was not forced to change the temporary password.");
 
   const locked = await fetch(`${apiBaseUrl}/api/facility/operations`, { headers: { Origin: origin, Cookie: branchSession.cookie } });
