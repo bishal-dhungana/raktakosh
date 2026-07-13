@@ -7,12 +7,22 @@ import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
 import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, safeDocumentName, scanDocument, validateDocument } from "./document-storage";
 import { donationCooldownActive, donationCooldownUntil, isValidDonationDate } from "../src/donor-cooldown";
 import { isStrongPassword } from "./password-policy";
+import { componentCategory, nphlDistrictToCanonical, parseNphlDirectoryPage } from "./blood-bank-directory";
 
 test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(NEPAL_DISTRICTS.length, 77);
   assert.equal(isNepalDistrict("Morang"), true);
   assert.equal(isNepalDistrict("Kanchanpur"), true);
   assert.equal(isNepalDistrict("Not a district"), false);
+});
+
+test("normalizes official NPHL Blood Bank directory entries without inventing districts", () => {
+  const html = '<tr class="btsc-row" data-btsc-id="24" data-btsc-name="Nepal Red Cross Society &amp; Central"><td>1</td><td>Centre</td><td>Location</td><td><div>Component Separation</div><div>General</div></td></tr>';
+  assert.deepEqual(parseNphlDirectoryPage(html), [{ externalId: "24", name: "Nepal Red Cross Society & Central", services: "Component Separation General" }]);
+  assert.equal(nphlDistrictToCanonical("काठमाण्डौ"), "Kathmandu");
+  assert.equal(nphlDistrictToCanonical("Not an official district"), null);
+  assert.equal(componentCategory("Plasma FFP (-30°C)"), "Plasma");
+  assert.equal(componentCategory("Packed Red cells"), "Packed red cells");
 });
 
 test("limits facility casework to coordination roles", () => {

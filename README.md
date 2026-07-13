@@ -22,6 +22,7 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 ## What the platform provides
 
 - Public search of verified facility-reported inventory by district, blood group, Rh factor, and blood component.
+- A separate no-login search of source-backed Blood Banks across Nepal, with listed contact numbers and NPHL-reported stock snapshots.
 - A canonical directory of all **77 Nepal districts** for search, donor profiles, and private requests.
 - Private blood-request creation with a mandatory malware-scanned verification document, status tracking, event timelines, and facility review workflows.
 - Donor registration, consent controls, availability preferences, and privacy-minimised outreach invitations.
@@ -106,6 +107,20 @@ The district list has one source of truth: [`src/nepal-districts.ts`](src/nepal-
 
 The development seed data intentionally includes example facilities and inventory in Morang only. That does **not** restrict district selection; it simply means other districts will have no public results until verified facilities publish inventory there.
 
+### Official Blood Bank directory
+
+The public **Find Blood Banks** search is separate from Raktakosh tenant inventory. It is imported from the National Public Health Laboratory (NPHL) Blood Transfusion Service Centre directory. Each result includes the listed telephone number, location, NPHL-reported component quantities, the time Raktakosh last synced the source, and a link back to the official source.
+
+This directory contains only records published by NPHL. If a district has no NPHL record, Raktakosh displays that fact instead of creating a fake facility. Raktakosh tenant Blood Banks can still manage their own inventory separately.
+
+Refresh the directory after migration and whenever a fresh snapshot is needed:
+
+```powershell
+npm run blood-banks:sync
+```
+
+See [Official Blood Bank directory](docs/BLOOD-BANK-DIRECTORY.md) for the source boundary and operating procedure.
+
 Read the complete guide in [District Coverage](docs/DISTRICT-COVERAGE.md).
 
 ## Run locally
@@ -184,6 +199,7 @@ Copy `.env.example` rather than creating configuration from scratch. The table b
 | `npm run dev:client` | Start the Vite client only. |
 | `npm run dev:server` | Start the Express API only. |
 | `npm run db:migrate` | Initialize or migrate the database schema and seed development reference data. |
+| `npm run blood-banks:sync` | Fetch and persist the current official NPHL Blood Transfusion Service Centre directory and stock snapshot. |
 | `npm test` | Run business-rule and security tests. |
 | `npm run build` | Type-check the project and produce the Vite production bundle in `dist/`. |
 | `npm run serve` | Build the client and start the API for local production-style testing. |
@@ -233,6 +249,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 | [Entity relationship diagram](docs/ERD.md) | Data model overview. |
 | [Module catalogue](docs/MODULES.md) | Platform modules and their users. |
 | [District coverage](docs/DISTRICT-COVERAGE.md) | Nepal-wide district directory and data-coverage behavior. |
+| [Official Blood Bank directory](docs/BLOOD-BANK-DIRECTORY.md) | NPHL directory import, public search, source attribution, and refresh procedure. |
 | [Blood-centre operations](docs/FACILITY-OPERATIONS.md) | Facility dashboard roles, private-data boundaries, and API behavior. |
 | [Multi-tenant management](docs/MULTI-TENANCY.md) | Super Admin provisioning, forced first-password change, and tenant isolation. |
 | [Donor pre-screening](docs/DONOR-PRE-SCREENING.md) | DOB, derived age, consented questionnaire, reviewer access, and deployment migration. |

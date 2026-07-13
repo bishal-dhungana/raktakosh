@@ -48,6 +48,7 @@ export interface CurrentUser {
   name: string;
   email: string;
   phone: string;
+  district: string | null;
   role: UserRole;
   facilityId: number | null;
   facilityName?: string | null;
@@ -126,6 +127,28 @@ export interface DonorProfile {
   dateOfBirth: string | null;
   age: number | null;
   eligibilityStatus: DonorEligibilityStatus;
+}
+
+export interface PublicBloodBank {
+  id: number;
+  name: string;
+  district: string;
+  municipality: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  services: string | null;
+  totalStock: number;
+  source: string;
+  sourceUrl: string;
+  lastSyncedAt: string;
+  availability: Array<{
+    component: string;
+    componentCategory: string;
+    bloodGroup: string;
+    rhFactor: string;
+    quantity: number;
+  }>;
 }
 
 export interface DonorScreening {

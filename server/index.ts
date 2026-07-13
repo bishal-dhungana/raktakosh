@@ -18,6 +18,7 @@ import type {
   FacilityOperations,
   InventoryItem,
   Invitation,
+  PublicBloodBank,
   PublicAvailability,
   RequestStatus,
   UserRole
@@ -88,6 +89,7 @@ const frontendOrigin = process.env.FRONTEND_ORIGIN?.replace(/\/$/, "");
 const validGroups = new Set(["A", "B", "AB", "O"]);
 const validRh = new Set(["+", "-"]);
 const validComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma"]);
+const validDirectoryComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma", "Other"]);
 const facilityRoles = new Set<UserRole>(["inventory_manager", "reviewer", "facility_admin"]);
 const localOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
 const sessionCookieName = "__Host-rk_session";
@@ -124,6 +126,8 @@ type FacilityCaseRow = RequestRow & { requesterName: string; requesterPhone: str
 type FacilityDonorResponseRow = Omit<FacilityOperations["donorResponses"][number], "age"> & { dateOfBirth: string | null };
 type DonorScreeningRow = Omit<DonorScreening, "answers">;
 type DonorScreeningAnswerRow = { questionKey: string; answer: string };
+type PublicBloodBankRow = Omit<PublicBloodBank, "availability">;
+type PublicBloodBankStockRow = PublicBloodBank["availability"][number] & { bloodBankId: number };
 type RequestDocumentRow = {
   id: number;
   requestId: number;
@@ -459,22 +463,22 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
     const phone = text(req.body?.phone, 40);
     const password = text(req.body?.password, 200);
     const role = text(req.body?.role, 30) as "requester" | "donor";
-    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || !isStrongPassword(password) || !["requester", "donor"].includes(role)) {
-      return apiError(res, 400, "Enter a valid name, email, phone, account type, and a password of at least 12 characters with upper-case, lower-case, number, and symbol.");
+    const district = text(req.body?.district, 80);
+    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || !isStrongPassword(password) || !["requester", "donor"].includes(role) || !isNepalDistrict(district)) {
+      return apiError(res, 400, "Enter a valid name, email, phone, Nepal district, account type, and a password of at least 12 characters with upper-case, lower-case, number, and symbol.");
     }
     const existing = await getAuthUserByEmail(email);
     if (existing) return apiError(res, 409, "An account already exists for this email address.");
     const createdAt = new Date().toISOString();
     const userId = await transaction(async (connection) => {
       const [userResult] = await connection.execute<ResultSetHeader>(
-        "INSERT INTO users (name, email, phone, role, facility_id, password_hash, verified_at, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)",
-        [name, email, phone, role, hashPassword(password), createdAt, createdAt]
+        "INSERT INTO users (name, email, phone, district, role, facility_id, password_hash, verified_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+        [name, email, phone, district, role, hashPassword(password), createdAt, createdAt]
       );
       const insertedId = Number(userResult.insertId);
       if (role === "donor") {
         const bloodGroup = text(req.body?.bloodGroup, 4);
         const rhFactor = text(req.body?.rhFactor, 2);
-        const district = text(req.body?.district, 80);
         const dateOfBirth = text(req.body?.dateOfBirth, 10);
         if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !isNepalDistrict(district) || !isValidDateOfBirth(dateOfBirth)) throw new Error("Donor registration requires a valid blood group, Rh factor, Nepal district, and date of birth.");
         await connection.execute(
@@ -618,6 +622,21 @@ app.post("/api/auth/change-password", requireAuth, requireCsrf, authRateLimit, a
   } catch (error) { next(error); }
 });
 
+app.patch("/api/account/district", requireAuth, requireCsrf, requireRoles("requester", "donor"), async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const district = text(req.body?.district, 80);
+    if (!isNepalDistrict(district)) return apiError(res, 400, "Choose a valid Nepal district.");
+    await transaction(async (connection) => {
+      await connection.execute("UPDATE users SET district = ? WHERE id = ?", [district, viewer.id]);
+      if (viewer.role === "donor") await connection.execute("UPDATE donor_profiles SET district = ?, updated_at = ? WHERE user_id = ?", [district, new Date().toISOString(), viewer.id]);
+    });
+    await writeAudit(viewer.id, "account_district_updated", "user", viewer.id, { district });
+    const user = await getCurrentUser(getToken(req));
+    res.json({ user });
+  } catch (error) { next(error); }
+});
+
 app.get("/api/policies", async (_req, res, next) => {
   try {
     res.json({ policies: await query("SELECT id, name, version, effective_at as effectiveAt, summary FROM policy_versions ORDER BY effective_at DESC") });
@@ -654,6 +673,64 @@ app.get("/api/public/availability", async (req, res, next) => {
 app.get("/api/public/facilities", async (_req, res, next) => {
   try {
     res.json({ facilities: await query("SELECT id, name, district, facility_type as facilityType, public_contact as contact, operating_hours as operatingHours FROM facilities WHERE verification_status = 'verified' AND accepts_requests = 1 ORDER BY name") });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/public/blood-banks", async (req, res, next) => {
+  try {
+    const requestedDistrict = text(req.query.district, 80);
+    const district = requestedDistrict === "All districts" ? "" : requestedDistrict;
+    const keyword = text(req.query.q, 100);
+    const bloodGroup = text(req.query.bloodGroup, 4);
+    const rhFactor = text(req.query.rhFactor, 2);
+    const component = text(req.query.component, 80);
+    if (district && !isNepalDistrict(district)) return apiError(res, 400, "Choose a valid Nepal district.");
+    if (bloodGroup && !validGroups.has(bloodGroup)) return apiError(res, 400, "Choose a supported blood group.");
+    if (rhFactor && !validRh.has(rhFactor)) return apiError(res, 400, "Choose a supported Rh factor.");
+    if (component && !validDirectoryComponents.has(component)) return apiError(res, 400, "Choose a supported blood component.");
+
+    const filters = ["b.active = 1"];
+    const values: unknown[] = [];
+    if (district) { filters.push("b.district = ?"); values.push(district); }
+    if (keyword) {
+      filters.push("CONCAT_WS(' ', b.name, b.district, COALESCE(b.municipality, ''), COALESCE(b.address, '')) LIKE ?");
+      values.push(`%${keyword}%`);
+    }
+    if (bloodGroup || rhFactor || component) {
+      const stockFilters = ["s.blood_bank_id = b.id", "s.available_quantity > 0"];
+      if (bloodGroup) { stockFilters.push("s.blood_group = ?"); values.push(bloodGroup); }
+      if (rhFactor) { stockFilters.push("s.rh_factor = ?"); values.push(rhFactor); }
+      if (component) { stockFilters.push("s.component_category = ?"); values.push(component); }
+      filters.push(`EXISTS (SELECT 1 FROM blood_bank_stock s WHERE ${stockFilters.join(" AND ")})`);
+    }
+    const banks = await query<PublicBloodBankRow>(
+      `SELECT b.id, b.name, b.district, b.municipality, b.address, b.phone, b.email, b.services,
+              b.total_stock as totalStock, b.source, b.source_url as sourceUrl, b.last_synced_at as lastSyncedAt
+       FROM blood_bank_directory b
+       WHERE ${filters.join(" AND ")}
+       ORDER BY b.total_stock DESC, b.name ASC LIMIT 100`,
+      values
+    );
+    const ids = banks.map((bank) => bank.id);
+    const stock = ids.length
+      ? await query<PublicBloodBankStockRow>(
+        `SELECT blood_bank_id as bloodBankId, component, component_category as componentCategory, blood_group as bloodGroup,
+                rh_factor as rhFactor, available_quantity as quantity
+         FROM blood_bank_stock WHERE blood_bank_id IN (${ids.map(() => "?").join(",")}) AND available_quantity > 0
+         ORDER BY component_category, blood_group, rh_factor`,
+        ids
+      )
+      : [];
+    const availabilityByBank = new Map<number, PublicBloodBank["availability"]>();
+    for (const entry of stock) {
+      const { bloodBankId, ...availability } = entry;
+      const current = availabilityByBank.get(bloodBankId) ?? [];
+      current.push({ ...availability, quantity: Number(availability.quantity) });
+      availabilityByBank.set(bloodBankId, current);
+    }
+    const results = banks.map((bank) => ({ ...bank, totalStock: Number(bank.totalStock), availability: availabilityByBank.get(bank.id) ?? [] }));
+    await writeAudit(null, "public_blood_bank_directory_search", "blood_bank_directory", "public", { district: district || "all", bloodGroup: bloodGroup || null, component: component || null, count: results.length });
+    res.json({ results, source: "NPHL BTSC directory" });
   } catch (error) { next(error); }
 });
 

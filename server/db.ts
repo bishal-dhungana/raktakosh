@@ -209,7 +209,7 @@ type CurrentUserRow = Omit<CurrentUser, "passwordChangeRequired"> & { passwordCh
 export async function getCurrentUser(token: string | undefined): Promise<CurrentUser | null> {
   if (!token) return null;
   const row = await one<CurrentUserRow>(
-    `SELECT u.id, u.name, u.email, u.phone, u.role, u.facility_id as facilityId, f.name as facilityName,
+    `SELECT u.id, u.name, u.email, u.phone, u.district, u.role, u.facility_id as facilityId, f.name as facilityName,
             CASE WHEN u.password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
      FROM sessions s
      JOIN users u ON u.id = s.user_id
@@ -237,11 +237,48 @@ const schema = [
     UNIQUE KEY uq_facilities_name (name),
     KEY idx_facilities_public (verification_status, public_availability, district)
   )`,
+  `CREATE TABLE IF NOT EXISTS blood_bank_directory (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    source VARCHAR(160) NOT NULL,
+    external_id VARCHAR(80) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    province VARCHAR(120) NULL,
+    district VARCHAR(80) NOT NULL,
+    source_district VARCHAR(120) NOT NULL,
+    municipality VARCHAR(180) NULL,
+    address VARCHAR(255) NULL,
+    phone VARCHAR(120) NULL,
+    email VARCHAR(190) NULL,
+    services TEXT NULL,
+    total_stock INT NOT NULL DEFAULT 0,
+    source_url VARCHAR(500) NOT NULL,
+    stock_source_url VARCHAR(500) NOT NULL,
+    last_synced_at VARCHAR(40) NOT NULL,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    UNIQUE KEY uq_blood_bank_directory_source (source, external_id),
+    KEY idx_blood_bank_directory_search (active, district, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS blood_bank_stock (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    blood_bank_id BIGINT UNSIGNED NOT NULL,
+    component VARCHAR(160) NOT NULL,
+    component_category VARCHAR(80) NOT NULL,
+    blood_group VARCHAR(4) NOT NULL,
+    rh_factor VARCHAR(2) NOT NULL,
+    available_quantity INT NOT NULL,
+    reported_at VARCHAR(40) NOT NULL,
+    UNIQUE KEY uq_blood_bank_stock_scope (blood_bank_id, component_category, blood_group, rh_factor),
+    KEY idx_blood_bank_stock_filter (component_category, blood_group, rh_factor, available_quantity),
+    CONSTRAINT fk_blood_bank_stock_directory FOREIGN KEY (blood_bank_id) REFERENCES blood_bank_directory(id) ON DELETE CASCADE
+  )`,
   `CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(160) NOT NULL,
     email VARCHAR(190) NOT NULL,
     phone VARCHAR(40) NOT NULL,
+    district VARCHAR(80) NULL,
     role VARCHAR(50) NOT NULL,
     facility_id BIGINT UNSIGNED NULL,
     password_hash VARCHAR(255) NOT NULL,
@@ -688,6 +725,16 @@ async function applySecurityMigrations(): Promise<void> {
       )`
     );
     await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [superAdminMfaMigrationId, now()]);
+  }
+
+  const bloodBankDirectoryMigrationId = "2026-07-13-official-blood-bank-directory";
+  const bloodBankDirectoryApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [bloodBankDirectoryMigrationId]);
+  if (!bloodBankDirectoryApplied) {
+    if (!(await columnExists("users", "district"))) {
+      await execute("ALTER TABLE users ADD COLUMN district VARCHAR(80) NULL AFTER phone");
+    }
+    await execute("UPDATE users u JOIN donor_profiles d ON d.user_id = u.id SET u.district = d.district WHERE u.district IS NULL");
+    await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [bloodBankDirectoryMigrationId, now()]);
   }
 }
 

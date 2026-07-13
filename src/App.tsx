@@ -15,12 +15,14 @@ import type {
   InventoryItem,
   Invitation,
   Locale,
+  PublicBloodBank,
   PublicAvailability,
   RequestStatus
 } from "./types";
 
 const groups = ["A", "B", "AB", "O"];
 const components = ["Whole blood", "Packed red cells", "Platelets", "Plasma"];
+const directoryComponents = [...components, "Other"];
 
 const statusLabels: Record<RequestStatus, string> = {
   draft: "Draft",
@@ -200,6 +202,7 @@ function App() {
         </button>
         <nav aria-label="Primary navigation" className="desktop-nav">
           <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("availability")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{t(locale, "findAvailability")}</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Find Blood Banks</button>
           <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{t(locale, "howItWorks")}</button>
         </nav>
         <div className="header-actions">
@@ -225,6 +228,7 @@ function App() {
         {view === "home" ? (
           <Home
             locale={locale}
+            preferredDistrict={user?.district ?? null}
             filters={searchFilters}
             setFilters={setSearchFilters}
             results={availability}
@@ -253,6 +257,7 @@ function App() {
 
 function Home({
   locale,
+  preferredDistrict,
   filters,
   setFilters,
   results,
@@ -262,6 +267,7 @@ function Home({
   onExplore
 }: {
   locale: Locale;
+  preferredDistrict: string | null;
   filters: { district: string; bloodGroup: string; rhFactor: string; component: string };
   setFilters: (filters: { district: string; bloodGroup: string; rhFactor: string; component: string }) => void;
   results: PublicAvailability[];
@@ -320,6 +326,8 @@ function Home({
         </div>
         <div className="search-footnote"><span className="footnote-rule" /> <p>Raktakosh is a coordination layer. Final blood-service decisions, matching, and availability confirmation always belong to the responsible facility.</p> <button className="text-button" onClick={onRequest}>{t(locale, "requestPrivate")} →</button></div>
       </section>
+
+      <BloodBankDirectory preferredDistrict={preferredDistrict} />
 
       <section id="how-it-works" className="workflow-section" aria-labelledby="workflow-title">
         <div className="section-wrap">
@@ -429,7 +437,7 @@ function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, on
           <label><span>Email address</span><input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required autoComplete="email" /></label>
           <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={!isBloodBankStaff && mode === "register" ? 12 : undefined} required autoComplete={isBloodBankStaff || mode === "signin" ? "current-password" : "new-password"} /></label>
           {!isBloodBankStaff && mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
-          {!isBloodBankStaff && mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label><span>Date of birth</span><input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} max={new Date().toISOString().slice(0, 10)} required /></label><small className="password-guidance full-field">Your date of birth is kept private and used to derive your age. A blood-centre clinician makes the final donation-eligibility decision.</small><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
+          {!isBloodBankStaff && mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>Date of birth</span><input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} max={new Date().toISOString().slice(0, 10)} required /></label><small className="password-guidance full-field">Your date of birth is kept private and used to derive your age. A blood-centre clinician makes the final donation-eligibility decision.</small><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
         {error && <Notice tone="warning">{error}</Notice>}
           <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : isBloodBankStaff ? "Open Blood Bank Dashboard" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
           {isBloodBankStaff ? <small className="password-guidance full-field">No Blood Bank account yet? Ask the platform administrator to issue one for your facility.</small> : mode === "signin" && onOpenBloodBankLogin ? <button className="text-button full-field" type="button" onClick={onOpenBloodBankLogin}>Blood Bank staff? Open the Blood Bank portal →</button> : null}
@@ -437,6 +445,75 @@ function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, on
       </section>
     </div>
   );
+}
+
+function BloodBankDirectory({ preferredDistrict }: { preferredDistrict: string | null }) {
+  const [filters, setFilters] = useState({ q: "", district: preferredDistrict ?? "", bloodGroup: "", rhFactor: "", component: "" });
+  const [results, setResults] = useState<PublicBloodBank[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const appliedPreferredDistrict = useRef(Boolean(preferredDistrict));
+  async function search(searchFilters = filters) {
+    setLoading(true); setError("");
+    try {
+      const payload = await api<{ results: PublicBloodBank[] }>(`/api/public/blood-banks${toQuery(searchFilters)}`);
+      setResults(payload.results);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "The official Blood Bank directory could not be loaded."); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { void search(); }, []);
+  useEffect(() => {
+    if (!preferredDistrict || appliedPreferredDistrict.current) return;
+    appliedPreferredDistrict.current = true;
+    const next = { ...filters, district: preferredDistrict };
+    setFilters(next);
+    void search(next);
+  }, [preferredDistrict]);
+  return <section id="blood-banks" className="blood-bank-directory-section section-wrap" aria-labelledby="blood-bank-directory-title">
+    <div className="section-kicker">02 · OFFICIAL BLOOD BANK DIRECTORY</div>
+    <div className="section-heading split-heading"><div><h2 id="blood-bank-directory-title">Find Blood Banks<br /><em>across Nepal.</em></h2></div><p>Search the government NPHL Blood Transfusion Service Centre directory without signing in. Contacts and stock are source-reported, not guaranteed reservations.</p></div>
+    <Card className="search-panel directory-search-panel"><form onSubmit={(event) => { event.preventDefault(); void search(); }}><div className="directory-search-grid">
+      <label><span>Search Blood Banks</span><input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="Name, district, municipality" maxLength={100} /></label>
+      <label><span>District</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}><option value="">All districts</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
+      <label><span>Blood group</span><select value={filters.bloodGroup} onChange={(event) => setFilters({ ...filters, bloodGroup: event.target.value })}><option value="">Any group</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label>
+      <label><span>Rh factor</span><select value={filters.rhFactor} onChange={(event) => setFilters({ ...filters, rhFactor: event.target.value })}><option value="">Any</option><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label>
+      <label><span>Component</span><select value={filters.component} onChange={(event) => setFilters({ ...filters, component: event.target.value })}><option value="">Any component</option>{directoryComponents.map((component) => <option key={component}>{component}</option>)}</select></label>
+      <button className="button button-signal search-submit" type="submit" disabled={loading}>{loading ? "Searching…" : "Search directory"}</button>
+    </div></form></Card>
+    <div className="results-bar" aria-live="polite"><span><b>{loading ? "…" : results.length}</b> official Blood Bank record{loading || results.length === 1 ? "" : "s"}</span><span>NPHL-reported stock is shown with the last directory sync time.</span></div>
+    {error ? <Notice tone="warning">{error}</Notice> : null}
+    <div className="blood-bank-grid">{!loading && results.map((bank) => <BloodBankCard key={bank.id} bank={bank} />)}{!loading && !results.length && <EmptyState title="No official Blood Bank record found" body="Try another district or remove a stock filter. This directory never creates unverified or fake Blood Bank entries." />}</div>
+  </section>;
+}
+
+function BloodBankCard({ bank, compact = false }: { bank: PublicBloodBank; compact?: boolean }) {
+  const phoneHref = bank.phone?.replace(/[^+\d]/g, "") ?? "";
+  const listedStock = bank.availability.slice(0, compact ? 3 : 6);
+  return <article className={`blood-bank-card ${compact ? "compact" : ""}`}>
+    <div className="availability-card-top"><span className="facility-type">OFFICIAL DIRECTORY</span><Pill className="availability-pill">{bank.totalStock > 0 ? `${bank.totalStock} units reported` : "No stock reported"}</Pill></div>
+    <h3>{bank.name}</h3>
+    <p className="facility-location">{bank.district}{bank.municipality ? ` · ${bank.municipality}` : ""}</p>
+    {bank.phone ? <a className="blood-bank-contact" href={`tel:${phoneHref}`}>Call {bank.phone}</a> : <span className="blood-bank-contact unavailable">Phone not listed by NPHL</span>}
+    {!compact && bank.services ? <p className="blood-bank-services">{bank.services}</p> : null}
+    <div className="blood-bank-stock"><b>Reported availability</b>{listedStock.length ? <ul>{listedStock.map((entry) => <li key={`${entry.componentCategory}-${entry.bloodGroup}-${entry.rhFactor}`}><span>{entry.bloodGroup}<sup>{entry.rhFactor}</sup> · {entry.componentCategory}</span><strong>{entry.quantity}</strong></li>)}</ul> : <p>No positive component quantities were reported in the latest NPHL snapshot.</p>}</div>
+    <div className="blood-bank-card-bottom"><span>NPHL synced<br /><b>{formatDate(bank.lastSyncedAt, "en")}</b></span><a href={bank.sourceUrl} target="_blank" rel="noreferrer">Official source ↗</a></div>
+  </article>;
+}
+
+function DistrictBloodBanks({ district, title = "Blood Banks in your district" }: { district: string; title?: string }) {
+  const [results, setResults] = useState<PublicBloodBank[]>([]);
+  const [loading, setLoading] = useState(Boolean(district));
+  useEffect(() => {
+    let cancelled = false;
+    if (!district) { setResults([]); setLoading(false); return; }
+    setLoading(true);
+    void api<{ results: PublicBloodBank[] }>(`/api/public/blood-banks${toQuery({ district })}`)
+      .then((payload) => { if (!cancelled) setResults(payload.results); })
+      .catch(() => { if (!cancelled) setResults([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [district]);
+  return <Card className="district-blood-bank-card"><div className="card-eyebrow">OFFICIAL DIRECTORY</div><h2>{title}</h2><p className="card-intro">{district ? `${district} · NPHL-reported stock and listed contact details` : "Choose your district to see official Blood Bank records nearby."}</p>{loading ? <div className="loader">Loading official district records…</div> : !district ? <EmptyState title="Choose a district" body="Your saved district will appear here automatically after account registration." /> : results.length ? <div className="district-blood-bank-list">{results.slice(0, 5).map((bank) => <BloodBankCard key={bank.id} bank={bank} compact />)}</div> : <EmptyState title="No official record in this district" body="The current NPHL directory does not list a Blood Bank here. Use the public search to find the nearest listed centre." />}</Card>;
 }
 
 function PasswordChangeDialog({ onChanged }: { onChanged: (user: CurrentUser) => void }) {
@@ -464,7 +541,7 @@ function Dashboard({ user, locale, onMessage, onReturnHome }: { user: CurrentUse
       <div className="dashboard-topline"><button className="back-link" onClick={onReturnHome}>← Public search</button><Pill className="role-pill">{roleLabels[user.role]}</Pill></div>
       <div className="dashboard-heading"><div><div className="section-kicker">PRIVATE WORKSPACE</div><h1>{title}</h1><p>Signed in as {user.name}{user.facilityName ? ` · ${user.facilityName}` : ""}.</p></div><div className="user-stamp"><Logo /><span><b>{user.name.split(" ").map((part) => part[0]).join("")}</b><small>verified active session</small></span></div></div>
       <Notice>{user.role === "platform_admin" ? "Administrative actions are recorded in the audit trail and scoped to platform governance." : "Request status supports coordination. Blood matching, medical eligibility, and final availability confirmation remain facility responsibilities."}</Notice>
-      {user.role === "requester" && <RequesterDashboard locale={locale} onMessage={onMessage} />}
+      {user.role === "requester" && <RequesterDashboard user={user} locale={locale} onMessage={onMessage} />}
       {user.role === "donor" && <DonorDashboard locale={locale} onMessage={onMessage} />}
       {(user.role === "inventory_manager" || user.role === "reviewer" || user.role === "facility_admin") && <FacilityWorkspace user={user} locale={locale} onMessage={onMessage} />}
       {user.role === "platform_admin" && <AdminDashboard locale={locale} onMessage={onMessage} />}
@@ -472,7 +549,7 @@ function Dashboard({ user, locale, onMessage, onReturnHome }: { user: CurrentUse
   );
 }
 
-function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: (message: string) => void }) {
+function RequesterDashboard({ user, locale, onMessage }: { user: CurrentUser; locale: Locale; onMessage: (message: string) => void }) {
   const [requests, setRequests] = useState<BloodRequest[]>([]);
   const [facilities, setFacilities] = useState<Array<{ id: number; name: string; district: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -482,7 +559,7 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
   const [documentUploadSecurity, setDocumentUploadSecurity] = useState<"malware_scanned" | "basic_validation" | "unavailable">("unavailable");
   const [documentUploadMessage, setDocumentUploadMessage] = useState<string | null>(null);
   const clientToken = useRef(typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-  const [form, setForm] = useState({ facilityId: "", patientInitials: "", relationship: "Family member", bloodGroup: "", rhFactor: "+", component: "Packed red cells", quantity: "1", urgency: "Urgent", district: "", neededBy: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) });
+  const [form, setForm] = useState({ facilityId: "", patientInitials: "", relationship: "Family member", bloodGroup: "", rhFactor: "+", component: "Packed red cells", quantity: "1", urgency: "Urgent", district: user.district ?? "", neededBy: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) });
 
   async function load() {
     setLoading(true);
@@ -519,6 +596,7 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
 
   return (
     <div className="dashboard-grid requester-grid">
+      <div className="requester-left-stack">
       <Card className="request-form-card"><div className="card-eyebrow">NEW COORDINATION REQUEST</div><h2>Share the minimum needed for a facility review.</h2><p className="card-intro">This creates a private request—not a reservation, blood match, or clinical approval.</p>
         <form className="form-grid" onSubmit={submit}>
           <label className="full-field"><span>Preferred verified facility</span><select value={form.facilityId} onChange={(event) => setForm({ ...form, facilityId: event.target.value })} required><option value="">Choose a facility</option>{facilities.map((facility) => <option key={facility.id} value={facility.id}>{facility.name} · {facility.district}</option>)}</select></label>
@@ -536,6 +614,8 @@ function RequesterDashboard({ locale, onMessage }: { locale: Locale; onMessage: 
           <div className="form-action full-field"><button className="button button-signal" type="submit" disabled={working || !documentUploadsEnabled}>{working ? "Submitting…" : "Submit document for review →"}</button></div>
         </form>
       </Card>
+      <DistrictBloodBanks district={form.district} title="Blood Banks in your selected district" />
+      </div>
       <Card className="request-list-card"><div className="card-eyebrow">YOUR REQUESTS</div><h2>Follow the documented handoff.</h2>{loading ? <div className="loader">Loading private requests…</div> : requests.length ? <div className="request-stack">{requests.map((request) => <RequestCard key={request.id} request={request} locale={locale} />)}</div> : <EmptyState title="No private requests yet" body="Submit one when a verified facility needs to coordinate a request." />}</Card>
     </div>
   );
@@ -603,6 +683,7 @@ function DonorDashboard({ locale, onMessage }: { locale: Locale; onMessage: (mes
       <label className="consent-toggle"><input type="checkbox" checked={profile.outreachConsent} onChange={(event) => setProfile({ ...profile, outreachConsent: event.target.checked, availability: event.target.checked ? (profile.availability === "opted_out" ? "available" : profile.availability) : "opted_out" })} /><span><b>I choose to receive controlled emergency outreach.</b><small>This is optional. Opting out stops future campaigns immediately.</small></span></label>
       <div className="form-action"><button className="button button-signal" onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save controls"}</button></div>
     </Card>
+    <DistrictBloodBanks district={profile.district} title="Blood Banks in your district" />
     <Card className="invitation-card"><div className="card-eyebrow">PRIVATE INVITATIONS</div><h2>A facility can ask—not expose.</h2><p className="card-intro">Invitations do not reveal the patient’s full identity, document, or requester contact details.</p>{invitations.length ? <div className="invitation-stack">{invitations.map((invite) => <article className="invite" key={invite.id}><div><Pill className={`invite-status ${invite.status}`}>{invite.status}</Pill><h3>{invite.bloodGroup}<sup>{invite.rhFactor}</sup> · {invite.component}</h3><p>{invite.facilityName} · expires {formatDate(invite.expiresAt, locale)}</p></div>{invite.status === "pending" && <div className="invite-actions"><button className="button button-ink" onClick={() => void respond(invite.id, "interested")}>I can be contacted</button><button className="button button-outline" onClick={() => void respond(invite.id, "declined")}>Not available</button><button className="text-button danger-text" onClick={() => void respond(invite.id, "stopped")}>Stop outreach</button></div>}</article>)}</div> : <EmptyState title="No active invitations" body="When you opt in and are available, a verified facility may send a limited private invitation." />}</Card>
     <Card className="screening-card"><div className="card-eyebrow">CONFIDENTIAL PRE-SCREENING</div><h2>Share only what a clinician needs to review.</h2><p className="card-intro">This is not medical clearance. A “yes” or “unsure” response keeps the result in review; a blood-centre clinician makes the final donation decision.</p><div className="screening-status"><span>Current status</span><Pill>{screening.eligibilityStatus.replaceAll("_", " ")}</Pill>{screening.submittedAt && <small>Submitted {formatDate(screening.submittedAt, locale)}</small>}</div><div className="screening-question-list">{DONOR_SCREENING_QUESTIONS.map((question) => <label key={question.key}><span>{question.label}</span><select value={screening.answers[question.key] ?? ""} onChange={(event) => setScreening({ ...screening, answers: { ...screening.answers, [question.key]: event.target.value as DonorScreeningAnswer } })} required><option value="">Choose a private answer</option><option value="no">No</option><option value="yes">Yes</option><option value="unsure">Unsure</option><option value="not_applicable">Not applicable</option></select></label>)}</div><label className="consent-toggle screening-consent"><input type="checkbox" checked={healthDataConsent} onChange={(event) => setHealthDataConsent(event.target.checked)} /><span><b>I consent to Raktakosh storing these answers for confidential facility pre-screening.</b><small>Only authorized facility reviewers can access submitted answers when you have accepted their outreach invitation.</small></span></label><div className="form-action"><button className="button button-signal" onClick={() => void saveScreening()} disabled={screeningSaving}>{screeningSaving ? "Saving confidential screening…" : "Submit confidential pre-screening"}</button></div></Card>
   </div>;

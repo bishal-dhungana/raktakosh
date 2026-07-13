@@ -119,6 +119,32 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .availability-card-bottom > span:first-child { display: grid; gap: 2px; }
 .availability-card-bottom b { color: var(--ink); font-weight: 700; font-size: 10px; }
 .contact-mark { align-self: end; color: var(--signal); font-weight: 800; }
+.blood-bank-directory-section { padding: 0 0 108px; }
+.directory-search-panel { box-shadow: 12px 12px 0 var(--paper-deep); }
+.directory-search-grid { display: grid; grid-template-columns: 1.3fr 0.8fr 0.65fr 0.65fr 0.9fr auto; gap: 12px; align-items: end; }
+.blood-bank-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.blood-bank-card { display: flex; min-height: 355px; flex-direction: column; padding: 20px; border: 1px solid var(--line); background: #fffdfa; }
+.blood-bank-card h3 { margin: 22px 0 7px; font-family: var(--display); font-size: 25px; font-weight: 600; letter-spacing: -0.055em; line-height: 1.04; }
+.blood-bank-contact { width: fit-content; margin-top: 13px; color: var(--signal); font-size: 12px; font-weight: 800; text-decoration: none; }
+.blood-bank-contact:hover { text-decoration: underline; }
+.blood-bank-contact.unavailable { color: var(--ink-soft); font-weight: 600; }
+.blood-bank-services { min-height: 30px; margin: 11px 0 0; color: var(--ink-soft); font-size: 10px; line-height: 1.45; }
+.blood-bank-stock { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--line); }
+.blood-bank-stock > b { display: block; margin-bottom: 6px; color: var(--ink-soft); font-family: var(--mono); font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; }
+.blood-bank-stock ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.blood-bank-stock li { display: flex; justify-content: space-between; gap: 10px; color: var(--ink-soft); font-size: 11px; }
+.blood-bank-stock li strong { color: var(--green); font-size: 12px; }
+.blood-bank-stock p { margin: 0; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.blood-bank-card-bottom { display: flex; justify-content: space-between; gap: 10px; margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 9px; }
+.blood-bank-card-bottom b { color: var(--ink); font-size: 10px; }
+.blood-bank-card-bottom a { align-self: end; color: var(--signal); font-size: 10px; font-weight: 800; text-decoration: none; }
+.blood-bank-card-bottom a:hover { text-decoration: underline; }
+.district-blood-bank-card { display: grid; gap: 0; }
+.district-blood-bank-list { display: grid; gap: 10px; margin-top: 15px; }
+.blood-bank-card.compact { min-height: 0; padding: 15px; }
+.blood-bank-card.compact h3 { margin-top: 14px; font-size: 20px; }
+.blood-bank-card.compact .blood-bank-stock { margin-top: 14px; padding-top: 12px; }
+.requester-left-stack { display: grid; gap: 17px; }
 .availability-pill { max-width: 180px; color: var(--ink); font-family: var(--body); font-size: 9px; font-weight: 800; letter-spacing: 0; text-transform: none; }
 .pulse-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
 .status-reported-available { border-color: #82a790; color: #245d48; background: var(--green-pale); }
@@ -396,6 +422,8 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .hero-copy { padding-bottom: 55px; }
   .coordination-card { width: calc(100% - 80px); margin: 0 40px 50px auto; }
   .availability-grid { grid-template-columns: repeat(2, 1fr); }
+  .blood-bank-grid { grid-template-columns: repeat(2, 1fr); }
+  .directory-search-grid { grid-template-columns: 1fr 1fr 1fr; }
   .education-grid { grid-template-columns: 1fr; }
   .requester-grid, .donor-grid, .facility-grid, .overview-grid, .admin-grid { grid-template-columns: 1fr; }
   .request-list-card, .inventory-side { position: static; max-height: none; overflow: visible; }
@@ -421,12 +449,15 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .safety-strip { grid-template-columns: auto 1fr; padding: 14px 21px; }
   .strip-end { display: none; }
   .section-wrap { width: min(100% - 32px, 1210px); }
-  .search-section, .education-section, .access-section { padding: 70px 0; }
+  .search-section, .blood-bank-directory-section, .education-section, .access-section { padding: 70px 0; }
   .split-heading, .workflow-heading { grid-template-columns: 1fr; gap: 17px; }
   .section-heading h2 { font-size: 45px; }
   .search-grid { grid-template-columns: 1fr 1fr; }
   .search-grid label:nth-child(4), .search-submit { grid-column: 1 / -1; }
   .availability-grid { grid-template-columns: 1fr; }
+  .blood-bank-grid { grid-template-columns: 1fr; }
+  .directory-search-grid { grid-template-columns: 1fr 1fr; }
+  .directory-search-grid label:first-child, .directory-search-grid .search-submit { grid-column: 1 / -1; }
   .results-bar { align-items: flex-start; flex-direction: column; }
   .search-footnote { grid-template-columns: 28px 1fr; }
   .search-footnote .text-button { grid-column: 2; }
@@ -482,6 +513,8 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .hero-actions .button { width: 100%; }
   .search-grid { grid-template-columns: 1fr; }
   .search-grid label, .search-grid label:nth-child(4), .search-submit { grid-column: auto; }
+  .directory-search-grid { grid-template-columns: 1fr; }
+  .directory-search-grid label:first-child, .directory-search-grid .search-submit { grid-column: auto; }
   .facility-stats { grid-template-columns: 1fr; }
   .facility-stats article, .facility-stats article:nth-child(2) { border-right: 0; border-bottom: 1px solid var(--line); }
   .facility-stats article:last-child { border-bottom: 0; }

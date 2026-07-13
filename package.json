@@ -10,6 +10,7 @@
     "dev:client": "vite",
     "build": "tsc --noEmit && vite build",
     "db:migrate": "tsx scripts/migrate-database.ts",
+    "blood-banks:sync": "tsx scripts/sync-blood-bank-directory.ts",
     "start": "tsx server/index.ts",
     "serve": "npm run build && npm run start",
     "test": "tsx --test server/**/*.test.ts",
