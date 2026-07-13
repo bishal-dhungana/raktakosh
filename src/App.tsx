@@ -251,11 +251,13 @@ function Home({
               <button className="button button-ghost-light" onClick={onRequest}>{t(locale, "requestBlood")}</button>
             </div>
           </div>
-          <div className="signal-board" aria-label="Raktakosh coordination status">
-            <div className="signal-board-top"><span>RAKTA SIGNAL</span><span>01 / 03</span></div>
-            <div className="signal-core"><span className="signal-number">03</span><span className="signal-label">verified<br />network facilities</span></div>
-            <div className="signal-track"><span className="track-active" /><span /><span /></div>
-            <p>Search first. Confirm directly with the responsible facility.</p>
+          <div className="coordination-card" aria-label={t(locale, "verifiedCoordination")}>
+            <div className="coordination-card-top"><span>{t(locale, "verifiedCoordination")}</span><span>01—03</span></div>
+            <ol>
+              <li><b>01</b><span>{t(locale, "coordinationStepOne")}</span></li>
+              <li><b>02</b><span>{t(locale, "coordinationStepTwo")}</span></li>
+              <li><b>03</b><span>{t(locale, "coordinationStepThree")}</span></li>
+            </ol>
           </div>
         </div>
         <div className="safety-strip"><span className="strip-icon">!</span><p>{t(locale, "noGuarantee")}</p><span className="strip-end">NPT</span></div>
@@ -296,6 +298,16 @@ function Home({
             <li><span className="workflow-number">02</span><div><h3>Submit a private request</h3><p>A requester sends only the minimum information to the selected verified facility.</p></div></li>
             <li><span className="workflow-number">03</span><div><h3>Facility takes the next step</h3><p>Staff review, update the request, and use controlled donor outreach only after an inventory path is unavailable.</p></div></li>
           </ol>
+        </div>
+      </section>
+
+      <section className="education-section section-wrap" aria-labelledby="education-title">
+        <div className="section-kicker">03 · {t(locale, "educationKicker")}</div>
+        <div className="section-heading split-heading"><div><h2 id="education-title">{t(locale, "educationTitle")}</h2></div><p>Raktakosh shares general education so you can understand the coordination process. A responsible blood-service facility makes all clinical decisions.</p></div>
+        <div className="education-grid">
+          <article><span>01</span><h3>{t(locale, "whatBloodTitle")}</h3><p>{t(locale, "whatBloodBody")}</p></article>
+          <article><span>02</span><h3>{t(locale, "whyDonateTitle")}</h3><p>{t(locale, "whyDonateBody")}</p></article>
+          <article><span>03</span><h3>{t(locale, "donationSafetyTitle")}</h3><p>{t(locale, "donationSafetyBody")}</p></article>
         </div>
       </section>
 
