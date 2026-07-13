@@ -4,7 +4,10 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends clamav clamav-freshclam ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && sed -i 's/^Example/#Example/' /etc/clamav/freshclam.conf \
+  && (getent group clamav >/dev/null || groupadd --system clamav) \
+  && (id -u clamav >/dev/null 2>&1 || useradd --system --gid clamav --home-dir /var/lib/clamav --shell /usr/sbin/nologin clamav) \
   && mkdir -p /tmp/raktakosh-document-scan /var/lib/clamav \
+  && chown -R clamav:clamav /var/lib/clamav \
   && chmod 700 /tmp/raktakosh-document-scan
 
 WORKDIR /app
