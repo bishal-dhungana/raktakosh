@@ -131,6 +131,34 @@ export interface FacilityDashboard {
   todayUpdates: number;
 }
 
+export interface FacilityCase extends BloodRequest {
+  requester: { name: string; phone: string };
+}
+
+export interface FacilityDonorResponse {
+  recipientId: number;
+  campaignId: number;
+  requestReference: string;
+  donorName: string;
+  phone: string;
+  bloodGroup: string;
+  rhFactor: string;
+  component: string;
+  district: string;
+  contactWindow: string;
+  respondedAt: string;
+}
+
+export interface FacilityOperations extends FacilityDashboard {
+  urgentOpenCount: number;
+  pendingReviewCount: number;
+  donorResponseCount: number;
+  privateCaseworkAvailable: boolean;
+  inventory: InventoryItem[];
+  cases: FacilityCase[];
+  donorResponses: FacilityDonorResponse[];
+}
+
 export interface AdminOverview {
   facilities: Array<{ id: number; name: string; district: string; status: string; publicAvailability: boolean; openRequests: number }>;
   staff: Array<{ id: number; name: string; email: string; role: UserRole; facilityName: string | null; accountStatus: "active" | "suspended"; mfaEnabled: boolean }>;

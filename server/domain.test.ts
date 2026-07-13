@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { availabilityState, canTransition, isStale } from "./domain";
+import { canViewFacilityCasework } from "./facility-access";
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
 
 test("uses a complete canonical directory of Nepal districts", () => {
@@ -8,6 +9,13 @@ test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(isNepalDistrict("Morang"), true);
   assert.equal(isNepalDistrict("Kanchanpur"), true);
   assert.equal(isNepalDistrict("Not a district"), false);
+});
+
+test("limits facility casework to coordination roles", () => {
+  assert.equal(canViewFacilityCasework("reviewer"), true);
+  assert.equal(canViewFacilityCasework("facility_admin"), true);
+  assert.equal(canViewFacilityCasework("inventory_manager"), false);
+  assert.equal(canViewFacilityCasework("platform_admin"), false);
 });
 
 test("allows only safe request transitions", () => {

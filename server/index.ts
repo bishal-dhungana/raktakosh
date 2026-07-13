@@ -15,6 +15,7 @@ import type {
   CurrentUser,
   DonorProfile,
   FacilityDashboard,
+  FacilityOperations,
   InventoryItem,
   Invitation,
   PublicAvailability,
@@ -51,6 +52,7 @@ import {
 } from "./db";
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
 import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
+import { canViewFacilityCasework } from "./facility-access";
 import { isNepalDistrict } from "../src/nepal-districts";
 
 const app = express();
@@ -97,6 +99,8 @@ interface RequestRow {
 type InventoryRow = Omit<InventoryItem, "publicVisible"> & { publicVisible: number };
 type DonorProfileRow = Omit<DonorProfile, "outreachConsent"> & { outreachConsent: number };
 type AdminFacilityRow = Omit<AdminOverview["facilities"][number], "publicAvailability"> & { publicAvailability: number };
+type FacilityCaseRow = RequestRow & { requesterName: string; requesterPhone: string };
+type FacilityDonorResponseRow = FacilityOperations["donorResponses"][number];
 
 function apiError(res: Response, status: number, error: string): void {
   res.status(status).json({ error });
@@ -212,6 +216,17 @@ async function requestDto(row: RequestRow, includeInternal = false): Promise<Blo
   };
   if (includeInternal) dto.internalNotes = await requestNotes(row.id);
   return dto;
+}
+
+async function inventoryForFacility(facilityId: number): Promise<InventoryItem[]> {
+  const inventory = await query<InventoryRow>(
+    `SELECT i.id, i.blood_group as bloodGroup, i.rh_factor as rhFactor, i.component, i.available_quantity as availableQuantity, i.reserved_quantity as reservedQuantity,
+            i.public_visible as publicVisible, i.last_updated as lastUpdated, COALESCE(u.name, 'System') as updatedBy, i.last_reason as reason
+     FROM inventory_records i LEFT JOIN users u ON u.id = i.updated_by_user_id
+     WHERE i.facility_id = ? ORDER BY i.component, i.blood_group, i.rh_factor`,
+    [facilityId]
+  );
+  return inventory.map((item) => ({ ...item, publicVisible: Boolean(item.publicVisible) }));
 }
 
 async function addRequestEvent(requestId: number, fromStatus: RequestStatus | null, toStatus: RequestStatus, message: string, actorId: number | null): Promise<void> {
@@ -492,11 +507,12 @@ app.get("/api/requests", requireAuth, async (req: AuthRequest, res, next) => {
     if (viewer.role === "platform_admin") {
       rows = await query<RequestRow>("SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id ORDER BY br.updated_at DESC");
     } else if (facilityRoles.has(viewer.role) && viewer.facilityId) {
+      if (!canViewFacilityCasework(viewer.role)) return res.json({ requests: [] });
       rows = await query<RequestRow>("SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id WHERE br.facility_id = ? ORDER BY br.updated_at DESC", [viewer.facilityId]);
     } else {
       rows = await query<RequestRow>("SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id WHERE br.requester_id = ? ORDER BY br.updated_at DESC", [viewer.id]);
     }
-    const includeInternal = facilityRoles.has(viewer.role) || viewer.role === "platform_admin";
+    const includeInternal = canViewFacilityCasework(viewer.role) || viewer.role === "platform_admin";
     res.json({ requests: await Promise.all(rows.map((row) => requestDto(row, includeInternal))) });
   } catch (error) { next(error); }
 });
@@ -592,7 +608,7 @@ app.post("/api/requests/:id/status", requireAuth, requireCsrf, requireRoles("rev
   } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/notes", requireAuth, requireCsrf, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+app.post("/api/requests/:id/notes", requireAuth, requireCsrf, requireRoles("reviewer", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
   try {
     const requestId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
@@ -649,14 +665,7 @@ app.post("/api/requests/:id/outreach", requireAuth, requireCsrf, requireRoles("r
 
 app.get("/api/inventory", requireAuth, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
   try {
-    const inventory = await query<InventoryRow>(
-      `SELECT i.id, i.blood_group as bloodGroup, i.rh_factor as rhFactor, i.component, i.available_quantity as availableQuantity, i.reserved_quantity as reservedQuantity,
-              i.public_visible as publicVisible, i.last_updated as lastUpdated, COALESCE(u.name, 'System') as updatedBy, i.last_reason as reason
-       FROM inventory_records i LEFT JOIN users u ON u.id = i.updated_by_user_id
-       WHERE i.facility_id = ? ORDER BY i.component, i.blood_group, i.rh_factor`,
-      [req.viewer!.facilityId]
-    );
-    res.json({ inventory: inventory.map((item) => ({ ...item, publicVisible: Boolean(item.publicVisible) })) });
+    res.json({ inventory: await inventoryForFacility(req.viewer!.facilityId!) });
   } catch (error) { next(error); }
 });
 
@@ -782,6 +791,88 @@ app.get("/api/facility/dashboard", requireAuth, requireVerifiedFacility, async (
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
     const updates = await one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_adjustments WHERE editor_user_id = ? AND created_at >= ?", [viewer.id, dayStart.toISOString()]);
     res.json({ dashboard: { facility: facility!, requestCounts, staleCount: Number(stale?.count ?? 0), todayUpdates: Number(updates?.count ?? 0) } });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const facilityId = viewer.facilityId!;
+    const privateCaseworkAvailable = canViewFacilityCasework(viewer.role);
+    const staleThreshold = new Date(Date.now() - STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
+    const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+    const [facility, requestCounts, stale, updates, urgent, pendingReview, donorResponseTotal, donorResponses, inventory] = await Promise.all([
+      one<FacilityOperations["facility"]>("SELECT id, name, district, verification_status as verificationStatus FROM facilities WHERE id = ? LIMIT 1", [facilityId]),
+      query<FacilityOperations["requestCounts"][number]>("SELECT status, COUNT(*) as count FROM blood_requests WHERE facility_id = ? GROUP BY status", [facilityId]),
+      one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_records WHERE facility_id = ? AND last_updated < ?", [facilityId, staleThreshold]),
+      one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_adjustments WHERE editor_user_id = ? AND created_at >= ?", [viewer.id, dayStart.toISOString()]),
+      one<{ count: number }>("SELECT COUNT(*) as count FROM blood_requests WHERE facility_id = ? AND urgency IN ('Urgent', 'Critical') AND status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')", [facilityId]),
+      one<{ count: number }>("SELECT COUNT(*) as count FROM blood_requests WHERE facility_id = ? AND status IN ('submitted', 'needs_information', 'under_review')", [facilityId]),
+      privateCaseworkAvailable
+        ? one<{ count: number }>(
+          `SELECT COUNT(*) as count
+           FROM campaign_recipients cr
+           JOIN outreach_campaigns c ON c.id = cr.campaign_id
+           JOIN blood_requests br ON br.id = c.request_id
+           WHERE c.facility_id = ? AND cr.status = 'interested' AND cr.responded_at IS NOT NULL
+             AND br.status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')`,
+          [facilityId]
+        )
+        : Promise.resolve(undefined),
+      privateCaseworkAvailable
+        ? query<FacilityDonorResponseRow>(
+          `SELECT cr.id as recipientId, c.id as campaignId, br.reference as requestReference, u.name as donorName, u.phone,
+                  d.self_reported_group as bloodGroup, d.self_reported_rh as rhFactor, br.component, d.district, d.contact_window as contactWindow,
+                  cr.responded_at as respondedAt
+           FROM campaign_recipients cr
+           JOIN outreach_campaigns c ON c.id = cr.campaign_id
+           JOIN blood_requests br ON br.id = c.request_id
+           JOIN donor_profiles d ON d.user_id = cr.donor_user_id
+           JOIN users u ON u.id = d.user_id
+           WHERE c.facility_id = ? AND cr.status = 'interested' AND cr.responded_at IS NOT NULL
+             AND br.status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')
+           ORDER BY cr.responded_at DESC LIMIT 50`,
+          [facilityId]
+        )
+        : Promise.resolve([]),
+      inventoryForFacility(facilityId)
+    ]);
+    const caseRows = privateCaseworkAvailable
+      ? await query<FacilityCaseRow>(
+        `SELECT br.*, f.name as facility_name, u.name as requesterName, u.phone as requesterPhone
+         FROM blood_requests br
+         JOIN facilities f ON f.id = br.facility_id
+         JOIN users u ON u.id = br.requester_id
+         WHERE br.facility_id = ? AND br.status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')
+         ORDER BY FIELD(br.urgency, 'Critical', 'Urgent', 'Routine'), br.needed_by ASC, br.updated_at DESC
+         LIMIT 100`,
+        [facilityId]
+      )
+      : [];
+    const cases = await Promise.all(caseRows.map(async (row) => ({
+      ...(await requestDto(row, true)),
+      requester: { name: row.requesterName, phone: row.requesterPhone }
+    })));
+    const donorResponseCount = Number(donorResponseTotal?.count ?? 0);
+    await writeAudit(viewer.id, privateCaseworkAvailable ? "facility_private_casework_viewed" : "facility_operations_summary_viewed", "facility", facilityId, {
+      caseCount: cases.length,
+      donorResponseCount
+    });
+    res.json({
+      operations: {
+        facility: facility!,
+        requestCounts,
+        staleCount: Number(stale?.count ?? 0),
+        todayUpdates: Number(updates?.count ?? 0),
+        urgentOpenCount: Number(urgent?.count ?? 0),
+        pendingReviewCount: Number(pendingReview?.count ?? 0),
+        donorResponseCount,
+        privateCaseworkAvailable,
+        inventory,
+        cases,
+        donorResponses
+      } satisfies FacilityOperations
+    });
   } catch (error) { next(error); }
 });
 

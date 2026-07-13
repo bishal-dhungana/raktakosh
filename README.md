@@ -223,6 +223,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 | [Entity relationship diagram](docs/ERD.md) | Data model overview. |
 | [Module catalogue](docs/MODULES.md) | Platform modules and their users. |
 | [District coverage](docs/DISTRICT-COVERAGE.md) | Nepal-wide district directory and data-coverage behavior. |
+| [Blood-centre operations](docs/FACILITY-OPERATIONS.md) | Facility dashboard roles, private-data boundaries, and API behavior. |
 | [Testing report](docs/TESTING-REPORT.md) | Automated checks and deployment smoke tests. |
 | [Viva guide](docs/VIVA-GUIDE.md) | Suggested project demonstration flow. |
 | [Product requirements document](docs/Raktakosh-PRD-and-MVP.md) | Product scope, workflows, requirements, and roadmap. |
