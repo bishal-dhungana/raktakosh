@@ -6,7 +6,6 @@ import { t } from "./i18n";
 import { NEPAL_DISTRICTS } from "./nepal-districts";
 import type {
   AdminOverview,
-  AvailabilityState,
   BloodRequest,
   CurrentUser,
   DonorProfile,
@@ -16,7 +15,6 @@ import type {
   Invitation,
   Locale,
   PublicBloodBank,
-  PublicAvailability,
   RequestStatus
 } from "./types";
 
@@ -92,17 +90,8 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function statusClass(status: RequestStatus | AvailabilityState): string {
+function statusClass(status: RequestStatus): string {
   return `status-${status.replaceAll("_", "-")}`;
-}
-
-function availabilityLabel(state: AvailabilityState): string {
-  return {
-    reported_available: "Reported available",
-    limited: "Limited — confirm with facility",
-    not_reported: "Not reported",
-    stale: "Stale information"
-  }[state];
 }
 
 function Logo(): ReactNode {
@@ -142,10 +131,6 @@ function StatusPill({ status }: { status: RequestStatus }) {
   return <Pill className={`status-pill ${statusClass(status)}`}>{statusLabels[status]}</Pill>;
 }
 
-function AvailabilityPill({ state }: { state: AvailabilityState }) {
-  return <Pill className={`availability-pill ${statusClass(state)}`}><span className="pulse-dot" />{availabilityLabel(state)}</Pill>;
-}
-
 function App() {
   const [locale, setLocale] = useState<Locale>("en");
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -153,24 +138,7 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [bloodBankAuthOpen, setBloodBankAuthOpen] = useState(false);
   const [notice, setNotice] = useState("");
-  const [availability, setAvailability] = useState<PublicAvailability[]>([]);
-  const [searching, setSearching] = useState(true);
-  const [searchFilters, setSearchFilters] = useState({ district: "", bloodGroup: "", rhFactor: "+", component: "" });
-
-  async function loadAvailability(filters = searchFilters) {
-    setSearching(true);
-    try {
-      const payload = await api<{ results: PublicAvailability[] }>(`/api/public/availability${toQuery(filters)}`);
-      setAvailability(payload.results);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Availability search could not be loaded.");
-    } finally {
-      setSearching(false);
-    }
-  }
-
   useEffect(() => {
-    void loadAvailability();
     void api<{ user: CurrentUser | null }>("/api/auth/me")
       .then((data) => setUser(data.user))
       .catch(() => undefined);
@@ -201,7 +169,6 @@ function App() {
           <span><strong>Raktakosh</strong><small>रक्तकोष</small></span>
         </button>
         <nav aria-label="Primary navigation" className="desktop-nav">
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("availability")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{t(locale, "findAvailability")}</button>
           <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Find Blood Banks</button>
           <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{t(locale, "howItWorks")}</button>
         </nav>
@@ -229,11 +196,6 @@ function App() {
           <Home
             locale={locale}
             preferredDistrict={user?.district ?? null}
-            filters={searchFilters}
-            setFilters={setSearchFilters}
-            results={availability}
-            searching={searching}
-            onSearch={() => void loadAvailability()}
             onRequest={startRequest}
             onExplore={() => setAuthOpen(true)}
           />
@@ -258,21 +220,11 @@ function App() {
 function Home({
   locale,
   preferredDistrict,
-  filters,
-  setFilters,
-  results,
-  searching,
-  onSearch,
   onRequest,
   onExplore
 }: {
   locale: Locale;
   preferredDistrict: string | null;
-  filters: { district: string; bloodGroup: string; rhFactor: string; component: string };
-  setFilters: (filters: { district: string; bloodGroup: string; rhFactor: string; component: string }) => void;
-  results: PublicAvailability[];
-  searching: boolean;
-  onSearch: () => void;
   onRequest: () => void;
   onExplore: () => void;
 }) {
@@ -285,7 +237,7 @@ function Home({
             <h1 id="hero-title">{t(locale, "verifiedStep")}</h1>
             <p>{t(locale, "heroBody")}</p>
             <div className="hero-actions">
-              <button className="button button-signal" onClick={() => document.getElementById("availability")?.scrollIntoView({ behavior: "smooth" })}>{t(locale, "findAvailability")} <span aria-hidden="true">↓</span></button>
+              <button className="button button-signal" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find Blood Banks <span aria-hidden="true">↓</span></button>
               <button className="button button-ghost-light" onClick={onRequest}>{t(locale, "requestBlood")}</button>
             </div>
           </div>
@@ -301,32 +253,6 @@ function Home({
         <div className="safety-strip"><span className="strip-icon">!</span><p>{t(locale, "noGuarantee")}</p><span className="strip-end">NPT</span></div>
       </section>
 
-      <section id="availability" className="search-section section-wrap" aria-labelledby="availability-title">
-        <div className="section-kicker">01 · PUBLIC DISCOVERY</div>
-        <div className="section-heading split-heading">
-          <div><h2 id="availability-title">Facility-reported, <em>not promised.</em></h2></div>
-          <p>Search high-level availability by district and component. Your search never reveals donor, patient, document, or staff information.</p>
-        </div>
-        <Card className="search-panel">
-          <form onSubmit={(event) => { event.preventDefault(); onSearch(); }}>
-            <div className="search-grid">
-              <label><span>{t(locale, "district")}</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}><option value="">{t(locale, "allDistricts")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
-              <label><span>{t(locale, "bloodGroup")}</span><select value={filters.bloodGroup} onChange={(event) => setFilters({ ...filters, bloodGroup: event.target.value })}><option value="">Any group</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label>
-              <label><span>Rh factor</span><select value={filters.rhFactor} onChange={(event) => setFilters({ ...filters, rhFactor: event.target.value })}><option value="">Any</option><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label>
-              <label><span>{t(locale, "component")}</span><select value={filters.component} onChange={(event) => setFilters({ ...filters, component: event.target.value })}><option value="">Any component</option>{components.map((component) => <option key={component}>{component}</option>)}</select></label>
-              <button className="button button-signal search-submit" type="submit" disabled={searching}>{searching ? "Searching…" : t(locale, "search")}</button>
-            </div>
-          </form>
-        </Card>
-
-        <div className="results-bar" aria-live="polite"><span><b>{searching ? "…" : results.length}</b> verified facility record{searching || results.length === 1 ? "" : "s"}</span><span>Records older than 12 hours are visibly marked stale.</span></div>
-        <div className="availability-grid">
-          {!searching && results.map((item) => <AvailabilityCard key={`${item.facilityId}-${item.bloodGroup}-${item.rhFactor}-${item.component}`} item={item} locale={locale} />)}
-          {!searching && results.length === 0 && <EmptyState title="No matching public records" body="Try another group or component, or contact a verified facility directly for the next safe step." />}
-        </div>
-        <div className="search-footnote"><span className="footnote-rule" /> <p>Raktakosh is a coordination layer. Final blood-service decisions, matching, and availability confirmation always belong to the responsible facility.</p> <button className="text-button" onClick={onRequest}>{t(locale, "requestPrivate")} →</button></div>
-      </section>
-
       <BloodBankDirectory preferredDistrict={preferredDistrict} />
 
       <section id="how-it-works" className="workflow-section" aria-labelledby="workflow-title">
@@ -334,7 +260,7 @@ function Home({
           <div className="section-kicker light-kicker">02 · THE HANDOFF</div>
           <div className="section-heading workflow-heading"><h2 id="workflow-title">Built for the moment<br /><em>after a search.</em></h2><p>Each handoff is explicit, auditable, and owned by the right person.</p></div>
           <ol className="workflow-list">
-            <li><span className="workflow-number">01</span><div><h3>Search the verified layer</h3><p>View public, timestamped facility availability without creating an account.</p></div></li>
+            <li><span className="workflow-number">01</span><div><h3>Find an official Blood Bank</h3><p>Search NPHL-listed Blood Banks, contact details, and reported stock without creating an account.</p></div></li>
             <li><span className="workflow-number">02</span><div><h3>Submit a private request</h3><p>A requester sends only the minimum information to the selected verified facility.</p></div></li>
             <li><span className="workflow-number">03</span><div><h3>Facility takes the next step</h3><p>Staff review, update the request, and use controlled donor outreach only after an inventory path is unavailable.</p></div></li>
           </ol>
@@ -355,18 +281,6 @@ function Home({
         <Card className="access-card"><div><Pill className="access-pill">ROLE-BASED ACCESS</Pill><h2>One platform. Every coordination workspace.</h2><p>Explore the requester, donor, facility, and administration workspaces through a consistent, role-aware experience.</p></div><button className="button button-ink" onClick={onExplore}>Explore workspaces <span aria-hidden="true">→</span></button></Card>
       </section>
     </>
-  );
-}
-
-function AvailabilityCard({ item, locale }: { item: PublicAvailability; locale: Locale }) {
-  return (
-    <article className={`availability-card ${item.state === "stale" ? "is-stale" : ""}`}>
-      <div className="availability-card-top"><span className="facility-type">{item.facilityType}</span><AvailabilityPill state={item.state} /></div>
-      <h3>{item.facilityName}</h3>
-      <p className="facility-location">{item.district} · {item.operatingHours}</p>
-      <div className="blood-lockup"><strong>{item.bloodGroup}<sup>{item.rhFactor}</sup></strong><span>{item.component}</span></div>
-      <div className="availability-card-bottom"><span>{t(locale, "lastUpdated")}<b>{formatDate(item.lastUpdated, locale)}</b></span><span className="contact-mark" title={item.contact}>Verified contact ↗</span></div>
-    </article>
   );
 }
 
