@@ -1,9 +1,10 @@
 services:
   - type: web
     name: raktakosh-api
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -28,8 +29,10 @@ services:
         sync: false
       - key: R2_SECRET_ACCESS_KEY
         sync: false
-      - key: DOCUMENT_SCAN_MODE
-        value: clamav_local
+      - key: DOCUMENT_SCANNER_URL
+        sync: false
+      - key: SCANNER_SHARED_SECRET
+        sync: false
       - key: DOCUMENT_RETENTION_DAYS
         value: "365"
       - key: AUTO_MIGRATE
@@ -45,4 +48,14 @@ services:
       - key: BOOTSTRAP_INVENTORY_EMAIL
         sync: false
       - key: BOOTSTRAP_INVENTORY_PASSWORD
+        sync: false
+  - type: pserv
+    name: raktakosh-document-scanner
+    runtime: docker
+    plan: starter
+    rootDir: scanner
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: SCANNER_SHARED_SECRET
         sync: false

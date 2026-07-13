@@ -35,7 +35,8 @@ R2_BUCKET=raktakosh
 R2_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com
 R2_ACCESS_KEY_ID=restricted-r2-access-key
 R2_SECRET_ACCESS_KEY=restricted-r2-secret-key
-DOCUMENT_SCAN_MODE=clamav_local
+DOCUMENT_SCANNER_URL=http://PRIVATE_SCANNER_INTERNAL_ADDRESS:8080
+SCANNER_SHARED_SECRET=long-random-secret-shared-only-with-the-private-scanner
 DOCUMENT_RETENTION_DAYS=365
 ```
 
@@ -96,8 +97,7 @@ Use:
 - Do not use `VITE_` prefixes for secrets.
 - Rotate any password exposed in chat, screenshots, or logs before public use.
 - Use a specific `FRONTEND_ORIGIN`; never use `*` with cookie credentials.
-- Request verification documents require private R2 storage and the Docker-based API service, which runs ClamAV locally. Do not enable `DOCUMENT_STORAGE_MODE=r2` until the R2 variables above and `DOCUMENT_SCAN_MODE=clamav_local` are configured. The API fails closed: it will neither create a request nor store a file if scanning is unavailable, definitions are not ready, or the file is malicious.
-- On a free Render service, the service can sleep and its filesystem is ephemeral. After a cold start, ClamAV definitions must download before document uploads become available. This is safe but not high-availability; use a paid persistent deployment before relying on the service for real-world clinical operations.
+- Request verification documents require private R2 storage and the private ClamAV scanner service. Do not enable `DOCUMENT_STORAGE_MODE=r2` until all R2 and scanner variables above are configured. The API fails closed: it will neither create a request nor store a file if scanning is unavailable or malicious.
 - Keep R2 Public Access disabled. Restrict the R2 API token to the `raktakosh` bucket and rotate it if exposed.
 - Configure an R2 lifecycle rule matching the approved `DOCUMENT_RETENTION_DAYS` policy. The API records each document's retention deadline and denies downloads after it, but the lifecycle rule is required to physically remove expired objects.
 - Before an actual health-service rollout, add verified contact flows, password recovery, backups, monitoring, clinical governance, and privacy/legal approval.
