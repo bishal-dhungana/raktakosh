@@ -277,7 +277,7 @@ function Home({
           </form>
         </Card>
 
-        <div className="results-bar" aria-live="polite"><span><b>{searching ? "…" : results.length}</b> facility records</span><span>Records older than 12 hours are visibly marked stale.</span></div>
+        <div className="results-bar" aria-live="polite"><span><b>{searching ? "…" : results.length}</b> verified facility record{searching || results.length === 1 ? "" : "s"}</span><span>Records older than 12 hours are visibly marked stale.</span></div>
         <div className="availability-grid">
           {!searching && results.map((item) => <AvailabilityCard key={`${item.facilityId}-${item.bloodGroup}-${item.rhFactor}-${item.component}`} item={item} locale={locale} />)}
           {!searching && results.length === 0 && <EmptyState title="No matching public records" body="Try another group or component, or contact a verified facility directly for the next safe step." />}
