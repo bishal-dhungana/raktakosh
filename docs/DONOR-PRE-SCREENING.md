@@ -51,4 +51,4 @@ The API checks the donor's active, interested response to a facility campaign be
 
 ## Deployment requirement
 
-This release adds database columns and tables. Before deploying the API with `AUTO_MIGRATE=false`, run `npm run db:migrate` once using the dedicated migration database account described in [Deployment Guide](DEPLOYMENT.md). Do not grant schema-change privileges to the runtime account.
+This release adds database columns and tables. Before deploying the API with `AUTO_MIGRATE=false`, run `npm run db:migrate` once using the dedicated migration database account described in [Deployment Guide](DEPLOYMENT.md). Set the account as `MIGRATION_DATABASE_URL` in the untracked `.env` file or supply it for the command. Do not grant schema-change privileges to the runtime account.

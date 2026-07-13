@@ -47,6 +47,8 @@ Run database migrations separately with an administrator/migration-only TiDB acc
 DATABASE_URL=mysql://MIGRATION_USERNAME:MIGRATION_PASSWORD@HOST:4000/raktakosh npm run db:migrate
 ```
 
+For local deployment preparation, you may instead set `MIGRATION_DATABASE_URL` in your untracked `.env` file. The migration command prefers that value and leaves the restricted runtime `DATABASE_URL` unchanged.
+
 The runtime database user must have only `SELECT`, `INSERT`, `UPDATE`, and `DELETE` permissions on the `raktakosh` database. It must not have schema-change or administrative privileges. Staff accounts require TOTP multi-factor enrollment on their first sign-in.
 
 Check the endpoint below before deploying the frontend:
