@@ -210,7 +210,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 - Authentication is rate-limited; sessions and temporary authentication challenges are stored as hashes.
 - Staff use TOTP multi-factor authentication, with encrypted secrets at rest.
 - Inventory changes, request workflow events, staff changes, and public searches create audit records.
-- Verification documents are enabled only when private R2 storage and the private ClamAV scanner are fully configured. The workflow fails closed: unscanned or malicious documents never create a request or enter object storage.
+- Verification documents are enabled only when private R2 storage and the Docker-based local ClamAV scanner are fully configured. The workflow fails closed: unscanned or malicious documents never create a request or enter object storage.
 - Do not use the platform as an emergency response service or a substitute for direct clinical communication with a blood-service facility.
 
 ## Documentation

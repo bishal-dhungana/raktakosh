@@ -1,10 +1,19 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const signedDownloadSeconds = 60;
 const allowedMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
+const executeFile = promisify(execFile);
+const clamavDatabaseDirectory = process.env.CLAMAV_DATABASE_DIR?.trim() || "/var/lib/clamav";
+const scanDirectory = join(tmpdir(), "raktakosh-document-scan");
 
 export type SupportedDocumentMime = "application/pdf" | "image/jpeg" | "image/png";
 
@@ -42,17 +51,13 @@ function storageConfiguration(): StorageConfiguration | null {
   return { bucket, endpoint, accessKeyId, secretAccessKey };
 }
 
-function scannerConfiguration(): { url: string; secret: string } | null {
-  const url = configuredValue("DOCUMENT_SCANNER_URL");
-  const secret = configuredValue("SCANNER_SHARED_SECRET");
-  if (!url || !secret || secret.length < 32) return null;
+function clamavDefinitionsReady(): boolean {
+  if (!existsSync(clamavDatabaseDirectory)) return false;
   try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    return readdirSync(clamavDatabaseDirectory).some((entry) => /\.(cvd|cld)$/i.test(entry));
   } catch {
-    return null;
+    return false;
   }
-  return { url: url.replace(/\/$/, ""), secret };
 }
 
 function retentionDays(): number {
@@ -74,13 +79,14 @@ function r2(): { client: S3Client; bucket: string } {
 }
 
 export function documentWorkflowEnabled(): boolean {
-  return process.env.DOCUMENT_STORAGE_MODE === "r2" && storageConfiguration() !== null && scannerConfiguration() !== null;
+  return process.env.DOCUMENT_STORAGE_MODE === "r2" && storageConfiguration() !== null && process.env.DOCUMENT_SCAN_MODE === "clamav_local" && clamavDefinitionsReady();
 }
 
 export function documentWorkflowUnavailableMessage(): string {
   if (process.env.DOCUMENT_STORAGE_MODE !== "r2") return "Secure document submission is not enabled yet.";
   if (!storageConfiguration()) return "Private document storage is not configured.";
-  if (!scannerConfiguration()) return "Document malware scanning is not configured.";
+  if (process.env.DOCUMENT_SCAN_MODE !== "clamav_local") return "Local document malware scanning is not configured.";
+  if (!clamavDefinitionsReady()) return "Document security definitions are preparing. Please try again shortly.";
   return "Secure document submission is unavailable. Please try again later.";
 }
 
@@ -134,32 +140,21 @@ export function documentRetentionUntil(reference = new Date()): string {
 }
 
 export async function scanDocument(buffer: Buffer, mimeType: SupportedDocumentMime, checksum: string): Promise<void> {
-  const scanner = scannerConfiguration();
-  if (!scanner) throw new DocumentWorkflowError(documentWorkflowUnavailableMessage(), 503);
-  const timeout = AbortSignal.timeout(30_000);
-  let response: globalThis.Response;
+  void mimeType;
+  void checksum;
+  if (!documentWorkflowEnabled()) throw new DocumentWorkflowError(documentWorkflowUnavailableMessage(), 503);
+  await mkdir(scanDirectory, { recursive: true, mode: 0o700 });
+  const filePath = join(scanDirectory, randomUUID());
   try {
-    response = await fetch(`${scanner.url}/scan`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(buffer.length),
-        "X-Raktakosh-Scanner-Token": scanner.secret,
-        "X-Raktakosh-Document-Mime": mimeType,
-        "X-Raktakosh-Document-SHA256": checksum
-      },
-      body: new Uint8Array(buffer),
-      signal: timeout
-    });
-  } catch {
+    await writeFile(filePath, buffer, { flag: "wx", mode: 0o600 });
+    await executeFile("clamscan", ["--no-summary", "--stdout", `--database=${clamavDatabaseDirectory}`, filePath], { timeout: 30_000, maxBuffer: 16 * 1024 });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === 1) {
+      throw new DocumentWorkflowError("The document could not pass the security scan. No request was created.", 422);
+    }
     throw new DocumentWorkflowError("Document scanning is temporarily unavailable. No request was created.", 503);
-  }
-  const payload = await response.json().catch(() => null) as { verdict?: string } | null;
-  if (response.status === 422 && payload?.verdict === "malicious") {
-    throw new DocumentWorkflowError("The document could not pass the security scan. No request was created.", 422);
-  }
-  if (!response.ok || payload?.verdict !== "clean") {
-    throw new DocumentWorkflowError("Document scanning is temporarily unavailable. No request was created.", 503);
+  } finally {
+    await rm(filePath, { force: true });
   }
 }
 
@@ -188,11 +183,4 @@ export async function signedDocumentDownload(key: string, originalName: string):
     ResponseContentDisposition: `attachment; filename="${originalName.replaceAll('"', "")}"`
   }), { expiresIn: signedDownloadSeconds });
   return { url, expiresAt: new Date(Date.now() + signedDownloadSeconds * 1000).toISOString() };
-}
-
-export function matchesScannerSecret(provided: string | undefined, expected: string): boolean {
-  if (!provided) return false;
-  const received = Buffer.from(provided);
-  const configured = Buffer.from(expected);
-  return received.length === configured.length && timingSafeEqual(received, configured);
 }
