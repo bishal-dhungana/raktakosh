@@ -2,15 +2,10 @@
 set -eu
 
 mkdir -p /var/run/clamav /var/lib/clamav /tmp/raktakosh-document-scan
+rm -f /var/run/clamav/freshclam.pid
 
-# The API stays fail-closed until the first signature update completes. Keep
-# this loop in the foreground of a child shell: detached freshclam daemons can
-# be stopped by free containers before their first database download finishes.
-(
-  while true; do
-    freshclam --stdout --config-file=/etc/clamav/freshclam.conf || true
-    sleep 21600
-  done
-) &
+# The API stays fail-closed until fresh malware definitions are available.
+# On free Render cold starts definitions are downloaded again before uploads open.
+freshclam --daemon --checks=24 --config-file=/etc/clamav/freshclam.conf >/proc/1/fd/1 2>/proc/1/fd/2 &
 
 exec npm start
