@@ -166,6 +166,14 @@ export interface FacilityDonorResponse {
 }
 
 export interface FacilityOperations extends FacilityDashboard {
+  facility: FacilityDashboard["facility"] & {
+    facilityType: string;
+    address: string;
+    publicContact: string;
+    operatingHours: string;
+    acceptsRequests: boolean;
+    participatesOutreach: boolean;
+  };
   urgentOpenCount: number;
   pendingReviewCount: number;
   donorResponseCount: number;

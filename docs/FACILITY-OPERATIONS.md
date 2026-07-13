@@ -20,6 +20,7 @@ All facility access requires an active account assigned to a verified facility. 
 - **Private requests** is visible only to reviewers and facility administrators. It lists active requests for the staff member's assigned facility and includes requester contact details for case coordination.
 - **Donor responses** is visible only to reviewers and facility administrators. It lists only donors who selected “I can be contacted” after receiving an outreach invitation from that facility.
 - **Inventory** is available to all verified facility staff. Only inventory managers and facility administrators can record adjustments.
+- **Facility profile** is available to all verified facility staff and shows the verified operating record used for public availability and request routing.
 
 ## Privacy rules
 

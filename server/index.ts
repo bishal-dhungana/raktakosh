@@ -918,7 +918,13 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
     const staleThreshold = new Date(Date.now() - STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
     const [facility, requestCounts, stale, updates, urgent, pendingReview, donorResponseTotal, donorResponseRows, inventory] = await Promise.all([
-      one<FacilityOperations["facility"]>("SELECT id, name, district, verification_status as verificationStatus FROM facilities WHERE id = ? LIMIT 1", [facilityId]),
+      one<FacilityOperations["facility"]>(
+        `SELECT id, name, district, verification_status as verificationStatus, facility_type as facilityType, address,
+                public_contact as publicContact, operating_hours as operatingHours, accepts_requests as acceptsRequests,
+                participates_outreach as participatesOutreach
+         FROM facilities WHERE id = ? LIMIT 1`,
+        [facilityId]
+      ),
       query<FacilityOperations["requestCounts"][number]>("SELECT status, COUNT(*) as count FROM blood_requests WHERE facility_id = ? GROUP BY status", [facilityId]),
       one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_records WHERE facility_id = ? AND last_updated < ?", [facilityId, staleThreshold]),
       one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_adjustments WHERE editor_user_id = ? AND created_at >= ?", [viewer.id, dayStart.toISOString()]),
@@ -981,7 +987,7 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
     });
     res.json({
       operations: {
-        facility: facility!,
+        facility: { ...facility!, acceptsRequests: Boolean(facility!.acceptsRequests), participatesOutreach: Boolean(facility!.participatesOutreach) },
         requestCounts,
         staleCount: Number(stale?.count ?? 0),
         todayUpdates: Number(updates?.count ?? 0),

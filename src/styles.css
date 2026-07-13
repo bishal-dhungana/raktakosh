@@ -335,6 +335,13 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .screening-review-controls { display: grid; grid-template-columns: minmax(150px, 0.8fr) minmax(160px, 1.2fr) auto; gap: 8px; align-items: end; }
 .screening-review-controls .button { min-height: 40px; padding: 8px 10px; font-size: 10px; }
 .screening-empty { margin: 0; color: #477083; font-size: 10px; }
+.facility-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 20px; border: 1px solid var(--line); }
+.facility-profile-grid > div { display: grid; gap: 6px; min-height: 88px; padding: 15px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fffdf8; }
+.facility-profile-grid > div:nth-child(even) { border-right: 0; }
+.facility-profile-grid > div:last-child { border-bottom: 0; }
+.facility-profile-grid span { color: var(--ink-soft); font-family: var(--mono); font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; }
+.facility-profile-grid b, .facility-profile-grid a { color: var(--ink); font-size: 12px; line-height: 1.5; }
+.facility-profile-grid a { color: var(--signal-dark); font-weight: 800; text-decoration: underline; }
 .inventory-list { display: grid; gap: 0; margin-top: 18px; }
 .inventory-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); }
 .inventory-row > div { display: flex; gap: 8px; align-items: baseline; }
@@ -447,6 +454,9 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .facility-stats article { min-height: 89px; padding: 13px; }
   .transition-row, .note-row { grid-template-columns: 1fr; }
   .screening-review-controls { grid-template-columns: 1fr; }
+  .facility-profile-grid { grid-template-columns: 1fr; }
+  .facility-profile-grid > div, .facility-profile-grid > div:nth-child(even) { border-right: 0; border-bottom: 1px solid var(--line); }
+  .facility-profile-grid > div:last-child { border-bottom: 0; }
   .transition-row .button, .note-row .button { width: 100%; }
   .invite { align-items: flex-start; flex-direction: column; }
   .invite-actions { width: 100%; }
