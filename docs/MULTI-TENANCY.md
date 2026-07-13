@@ -31,3 +31,15 @@ The temporary password is hashed immediately and is never returned by the API or
 ## Activation
 
 Super Admin may activate a branch for operations during provisioning. Activating a tenant allows its issued Blood Bank Admin to use the private operational workspace; public inventory remains hidden until that tenant records inventory with public visibility enabled.
+
+## Live verification
+
+The repository includes a guarded end-to-end verifier. It creates temporary Super Admin and Blood Bank tenant records, verifies MFA enrollment, provisioning, temporary-password lockout, password replacement, session rotation, and facility-scoped dashboard access, then removes its temporary records.
+
+It runs only when explicitly enabled:
+
+```text
+RUN_LIVE_TENANT_TEST=true npm run test:live:tenant
+```
+
+Use a migration-capable database URL only for this guarded test and never print its credentials.

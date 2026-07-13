@@ -12,7 +12,8 @@
     "db:migrate": "tsx scripts/migrate-database.ts",
     "start": "tsx server/index.ts",
     "serve": "npm run build && npm run start",
-    "test": "tsx --test server/**/*.test.ts"
+    "test": "tsx --test server/**/*.test.ts",
+    "test:live:tenant": "tsx scripts/verify-multi-tenant-live.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",
