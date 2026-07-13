@@ -14,6 +14,7 @@ import type {
   BloodRequest,
   CurrentUser,
   DonorProfile,
+  DonorScreening,
   FacilityDashboard,
   FacilityOperations,
   InventoryItem,
@@ -53,6 +54,15 @@ import {
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
 import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
 import { canViewFacilityCasework } from "./facility-access";
+import {
+  DONOR_SCREENING_QUESTIONS,
+  DONOR_SCREENING_VERSION,
+  deriveAge,
+  hasCompleteScreeningAnswers,
+  isValidDateOfBirth,
+  preliminaryEligibilityStatus,
+  type DonorEligibilityStatus
+} from "../src/donor-screening";
 import { isNepalDistrict } from "../src/nepal-districts";
 
 const app = express();
@@ -97,10 +107,12 @@ interface RequestRow {
 }
 
 type InventoryRow = Omit<InventoryItem, "publicVisible"> & { publicVisible: number };
-type DonorProfileRow = Omit<DonorProfile, "outreachConsent"> & { outreachConsent: number };
+type DonorProfileRow = Omit<DonorProfile, "outreachConsent" | "age" | "eligibilityStatus"> & { outreachConsent: number };
 type AdminFacilityRow = Omit<AdminOverview["facilities"][number], "publicAvailability"> & { publicAvailability: number };
 type FacilityCaseRow = RequestRow & { requesterName: string; requesterPhone: string };
-type FacilityDonorResponseRow = FacilityOperations["donorResponses"][number];
+type FacilityDonorResponseRow = Omit<FacilityOperations["donorResponses"][number], "age"> & { dateOfBirth: string | null };
+type DonorScreeningRow = Omit<DonorScreening, "answers">;
+type DonorScreeningAnswerRow = { questionKey: string; answer: string };
 
 function apiError(res: Response, status: number, error: string): void {
   res.status(status).json({ error });
@@ -229,6 +241,53 @@ async function inventoryForFacility(facilityId: number): Promise<InventoryItem[]
   return inventory.map((item) => ({ ...item, publicVisible: Boolean(item.publicVisible) }));
 }
 
+async function donorScreeningDto(donorUserId: number): Promise<DonorScreening> {
+  const screening = await one<DonorScreeningRow>(
+    `SELECT questionnaire_version as questionnaireVersion, eligibility_status as eligibilityStatus,
+            medical_data_consent_at as consentedAt, submitted_at as submittedAt, reviewed_at as reviewedAt,
+            review_reason as reviewReason
+     FROM donor_health_screenings
+     WHERE donor_user_id = ? AND questionnaire_version = ? LIMIT 1`,
+    [donorUserId, DONOR_SCREENING_VERSION]
+  );
+  if (!screening) {
+    return {
+      questionnaireVersion: DONOR_SCREENING_VERSION,
+      eligibilityStatus: "not_started",
+      consentedAt: null,
+      submittedAt: null,
+      reviewedAt: null,
+      reviewReason: null,
+      answers: {}
+    };
+  }
+  const answers = await query<DonorScreeningAnswerRow>(
+    `SELECT question_key as questionKey, answer
+     FROM donor_screening_answers a
+     JOIN donor_health_screenings s ON s.id = a.screening_id
+     WHERE s.donor_user_id = ? AND s.questionnaire_version = ?`,
+    [donorUserId, DONOR_SCREENING_VERSION]
+  );
+  return {
+    ...screening,
+    answers: Object.fromEntries(answers.map((answer) => [answer.questionKey, answer.answer])) as DonorScreening["answers"]
+  };
+}
+
+async function hasActiveInterestedDonorResponse(facilityId: number, donorUserId: number): Promise<boolean> {
+  const recipient = await one<{ id: number }>(
+    `SELECT cr.id
+     FROM campaign_recipients cr
+     JOIN outreach_campaigns c ON c.id = cr.campaign_id
+     JOIN blood_requests br ON br.id = c.request_id
+     WHERE c.facility_id = ? AND cr.donor_user_id = ? AND cr.status = 'interested'
+       AND br.status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')
+     LIMIT 1`,
+    [facilityId, donorUserId]
+  );
+  return Boolean(recipient);
+}
+
 async function addRequestEvent(requestId: number, fromStatus: RequestStatus | null, toStatus: RequestStatus, message: string, actorId: number | null): Promise<void> {
   await execute(
     "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -353,11 +412,12 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
         const bloodGroup = text(req.body?.bloodGroup, 4);
         const rhFactor = text(req.body?.rhFactor, 2);
         const district = text(req.body?.district, 80);
-        if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !isNepalDistrict(district)) throw new Error("Donor registration requires a valid blood group, Rh factor, and Nepal district.");
+        const dateOfBirth = text(req.body?.dateOfBirth, 10);
+        if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !isNepalDistrict(district) || !isValidDateOfBirth(dateOfBirth)) throw new Error("Donor registration requires a valid blood group, Rh factor, Nepal district, and date of birth.");
         await connection.execute(
-          `INSERT INTO donor_profiles (user_id, self_reported_group, self_reported_rh, district, availability, outreach_consent, contact_window, max_contacts_per_month, pre_screening_result, policy_version, last_donation_date, last_contact_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'available', ?, '08:00–20:00 NPT', 2, ?, 'Donor pre-screen v1.0', NULL, NULL, ?, ?)`,
-          [insertedId, bloodGroup, rhFactor, district, req.body?.outreachConsent ? 1 : 0, "Pre-screening is guidance only; final eligibility is determined by the facility.", createdAt, createdAt]
+          `INSERT INTO donor_profiles (user_id, self_reported_group, self_reported_rh, district, date_of_birth, availability, outreach_consent, contact_window, max_contacts_per_month, pre_screening_result, policy_version, last_donation_date, last_contact_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'available', ?, '08:00–20:00 NPT', 2, ?, 'Donor pre-screen v1.0', NULL, NULL, ?, ?)`,
+          [insertedId, bloodGroup, rhFactor, district, dateOfBirth, req.body?.outreachConsent ? 1 : 0, "Complete the confidential health pre-screening. A blood-centre clinician makes the final eligibility decision.", createdAt, createdAt]
         );
       }
       return insertedId;
@@ -709,14 +769,70 @@ app.post("/api/inventory", requireAuth, requireCsrf, requireRoles("inventory_man
 app.get("/api/donor/profile", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
   try {
     const profile = await one<DonorProfileRow>(
-      `SELECT id, self_reported_group as selfReportedGroup, self_reported_rh as selfReportedRh, district, availability,
+      `SELECT id, self_reported_group as selfReportedGroup, self_reported_rh as selfReportedRh, district, date_of_birth as dateOfBirth, availability,
               outreach_consent as outreachConsent, contact_window as contactWindow, max_contacts_per_month as maxContactsPerMonth,
               pre_screening_result as preScreeningResult, policy_version as policyVersion, last_donation_date as lastDonationDate
        FROM donor_profiles WHERE user_id = ? LIMIT 1`,
       [req.viewer!.id]
     );
     if (!profile) return apiError(res, 404, "Donor profile not found.");
-    res.json({ profile: { ...profile, outreachConsent: Boolean(profile.outreachConsent) } });
+    const screening = await donorScreeningDto(req.viewer!.id);
+    res.json({ profile: { ...profile, outreachConsent: Boolean(profile.outreachConsent), age: profile.dateOfBirth ? deriveAge(profile.dateOfBirth) : null, eligibilityStatus: screening.eligibilityStatus } });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/donor/screening", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+  try {
+    res.json({ screening: await donorScreeningDto(req.viewer!.id) });
+  } catch (error) { next(error); }
+});
+
+app.patch("/api/donor/screening", requireAuth, requireCsrf, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const answers = req.body?.answers;
+    if (req.body?.healthDataConsent !== true || !hasCompleteScreeningAnswers(answers)) return apiError(res, 400, "Answer every confidential pre-screening question and confirm consent before submitting.");
+    const status = preliminaryEligibilityStatus(answers);
+    const timestamp = new Date().toISOString();
+    await transaction(async (connection) => {
+      const [existingRaw] = await connection.execute(
+        "SELECT id FROM donor_health_screenings WHERE donor_user_id = ? AND questionnaire_version = ? FOR UPDATE",
+        [viewer.id, DONOR_SCREENING_VERSION]
+      );
+      const existing = (existingRaw as Array<{ id: number }>)[0];
+      let screeningId: number;
+      if (existing) {
+        screeningId = Number(existing.id);
+        await connection.execute(
+          `UPDATE donor_health_screenings
+           SET eligibility_status = ?, medical_data_consent_at = ?, submitted_at = ?, reviewed_by_user_id = NULL,
+               reviewed_at = NULL, review_reason = NULL, updated_at = ?
+           WHERE id = ?`,
+          [status, timestamp, timestamp, timestamp, screeningId]
+        );
+      } else {
+        const [created] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO donor_health_screenings (donor_user_id, questionnaire_version, eligibility_status, medical_data_consent_at, submitted_at, reviewed_by_user_id, reviewed_at, review_reason, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`,
+          [viewer.id, DONOR_SCREENING_VERSION, status, timestamp, timestamp, timestamp, timestamp]
+        );
+        screeningId = Number(created.insertId);
+      }
+      for (const question of DONOR_SCREENING_QUESTIONS) {
+        await connection.execute(
+          `INSERT INTO donor_screening_answers (screening_id, question_key, answer, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE answer = VALUES(answer), updated_at = VALUES(updated_at)`,
+          [screeningId, question.key, answers[question.key], timestamp, timestamp]
+        );
+      }
+      await connection.execute(
+        "UPDATE donor_profiles SET pre_screening_result = ?, policy_version = ?, updated_at = ? WHERE user_id = ?",
+        [status === "needs_review" ? "Your answers need confidential blood-centre review before any donation outreach." : "Your pre-screening was submitted. A blood-centre clinician must make the final eligibility decision.", `Donor pre-screen ${DONOR_SCREENING_VERSION}`, timestamp, viewer.id]
+      );
+    });
+    await writeAudit(viewer.id, "donor_screening_submitted", "donor_health_screening", viewer.id, { questionnaireVersion: DONOR_SCREENING_VERSION, eligibilityStatus: status });
+    res.json({ screening: await donorScreeningDto(viewer.id) });
   } catch (error) { next(error); }
 });
 
@@ -801,7 +917,7 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
     const privateCaseworkAvailable = canViewFacilityCasework(viewer.role);
     const staleThreshold = new Date(Date.now() - STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
-    const [facility, requestCounts, stale, updates, urgent, pendingReview, donorResponseTotal, donorResponses, inventory] = await Promise.all([
+    const [facility, requestCounts, stale, updates, urgent, pendingReview, donorResponseTotal, donorResponseRows, inventory] = await Promise.all([
       one<FacilityOperations["facility"]>("SELECT id, name, district, verification_status as verificationStatus FROM facilities WHERE id = ? LIMIT 1", [facilityId]),
       query<FacilityOperations["requestCounts"][number]>("SELECT status, COUNT(*) as count FROM blood_requests WHERE facility_id = ? GROUP BY status", [facilityId]),
       one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_records WHERE facility_id = ? AND last_updated < ?", [facilityId, staleThreshold]),
@@ -821,18 +937,19 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
         : Promise.resolve(undefined),
       privateCaseworkAvailable
         ? query<FacilityDonorResponseRow>(
-          `SELECT cr.id as recipientId, c.id as campaignId, br.reference as requestReference, u.name as donorName, u.phone,
+          `SELECT cr.id as recipientId, cr.donor_user_id as donorUserId, c.id as campaignId, br.reference as requestReference, u.name as donorName, u.phone,
                   d.self_reported_group as bloodGroup, d.self_reported_rh as rhFactor, br.component, d.district, d.contact_window as contactWindow,
-                  cr.responded_at as respondedAt
+                  d.date_of_birth as dateOfBirth, COALESCE(s.eligibility_status, 'not_started') as eligibilityStatus, cr.responded_at as respondedAt
            FROM campaign_recipients cr
            JOIN outreach_campaigns c ON c.id = cr.campaign_id
            JOIN blood_requests br ON br.id = c.request_id
            JOIN donor_profiles d ON d.user_id = cr.donor_user_id
            JOIN users u ON u.id = d.user_id
+           LEFT JOIN donor_health_screenings s ON s.donor_user_id = d.user_id AND s.questionnaire_version = ?
            WHERE c.facility_id = ? AND cr.status = 'interested' AND cr.responded_at IS NOT NULL
              AND br.status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')
            ORDER BY cr.responded_at DESC LIMIT 50`,
-          [facilityId]
+          [DONOR_SCREENING_VERSION, facilityId]
         )
         : Promise.resolve([]),
       inventoryForFacility(facilityId)
@@ -853,6 +970,10 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
       ...(await requestDto(row, true)),
       requester: { name: row.requesterName, phone: row.requesterPhone }
     })));
+    const donorResponses = donorResponseRows.map(({ dateOfBirth, ...response }) => ({
+      ...response,
+      age: dateOfBirth ? deriveAge(dateOfBirth) : null
+    }));
     const donorResponseCount = Number(donorResponseTotal?.count ?? 0);
     await writeAudit(viewer.id, privateCaseworkAvailable ? "facility_private_casework_viewed" : "facility_operations_summary_viewed", "facility", facilityId, {
       caseCount: cases.length,
@@ -873,6 +994,40 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
         donorResponses
       } satisfies FacilityOperations
     });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/facility/donors/:id/screening", requireAuth, requireRoles("reviewer", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const donorUserId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    if (!donorUserId || !(await hasActiveInterestedDonorResponse(viewer.facilityId!, donorUserId))) return apiError(res, 404, "Donor response not found.");
+    const screening = await donorScreeningDto(donorUserId);
+    await writeAudit(viewer.id, "donor_health_screening_viewed", "donor_health_screening", donorUserId, { facilityId: viewer.facilityId, eligibilityStatus: screening.eligibilityStatus });
+    res.json({ screening });
+  } catch (error) { next(error); }
+});
+
+app.patch("/api/facility/donors/:id/eligibility", requireAuth, requireCsrf, requireRoles("reviewer", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const donorUserId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    const eligibilityStatus = text(req.body?.eligibilityStatus, 40) as DonorEligibilityStatus;
+    const reviewReason = text(req.body?.reviewReason, 500);
+    const allowedStatuses = new Set<DonorEligibilityStatus>(["needs_review", "provisionally_eligible", "not_eligible_now"]);
+    if (!donorUserId || !allowedStatuses.has(eligibilityStatus) || (eligibilityStatus === "not_eligible_now" && !reviewReason)) return apiError(res, 400, "Choose a permitted review status and include a reason when the donor is not eligible now.");
+    if (!(await hasActiveInterestedDonorResponse(viewer.facilityId!, donorUserId))) return apiError(res, 404, "Donor response not found.");
+    const reviewedAt = new Date().toISOString();
+    const result = await execute(
+      `UPDATE donor_health_screenings
+       SET eligibility_status = ?, reviewed_by_user_id = ?, reviewed_at = ?, review_reason = ?, updated_at = ?
+       WHERE donor_user_id = ? AND questionnaire_version = ?`,
+      [eligibilityStatus, viewer.id, reviewedAt, reviewReason || null, reviewedAt, donorUserId, DONOR_SCREENING_VERSION]
+    );
+    if (!result.affectedRows) return apiError(res, 409, "The donor has not submitted the current pre-screening questionnaire.");
+    await createNotification(donorUserId, "donor_screening", "Pre-screening status updated", "A facility updated your pre-screening status. This is not a clinical diagnosis or final medical clearance.");
+    await writeAudit(viewer.id, "donor_screening_reviewed", "donor_health_screening", donorUserId, { facilityId: viewer.facilityId, eligibilityStatus });
+    res.json({ screening: await donorScreeningDto(donorUserId) });
   } catch (error) { next(error); }
 });
 

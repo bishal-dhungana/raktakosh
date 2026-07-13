@@ -368,6 +368,7 @@ const schema = [
     self_reported_group VARCHAR(4) NOT NULL,
     self_reported_rh VARCHAR(2) NOT NULL,
     district VARCHAR(80) NOT NULL,
+    date_of_birth VARCHAR(10) NULL,
     availability VARCHAR(50) NOT NULL,
     outreach_consent TINYINT(1) NOT NULL DEFAULT 0,
     contact_window VARCHAR(100) NOT NULL,
@@ -381,6 +382,33 @@ const schema = [
     UNIQUE KEY uq_donor_profile_user (user_id),
     KEY idx_donor_campaign (district, self_reported_group, self_reported_rh, availability, outreach_consent),
     CONSTRAINT fk_donor_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS donor_health_screenings (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    donor_user_id BIGINT UNSIGNED NOT NULL,
+    questionnaire_version VARCHAR(40) NOT NULL,
+    eligibility_status VARCHAR(40) NOT NULL,
+    medical_data_consent_at VARCHAR(40) NOT NULL,
+    submitted_at VARCHAR(40) NOT NULL,
+    reviewed_by_user_id BIGINT UNSIGNED NULL,
+    reviewed_at VARCHAR(40) NULL,
+    review_reason VARCHAR(500) NULL,
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    UNIQUE KEY uq_donor_screening_version (donor_user_id, questionnaire_version),
+    KEY idx_donor_screening_status (eligibility_status, updated_at),
+    CONSTRAINT fk_screening_donor FOREIGN KEY (donor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_screening_reviewer FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS donor_screening_answers (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    screening_id BIGINT UNSIGNED NOT NULL,
+    question_key VARCHAR(80) NOT NULL,
+    answer VARCHAR(20) NOT NULL,
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    UNIQUE KEY uq_screening_question (screening_id, question_key),
+    CONSTRAINT fk_screening_answer_screening FOREIGN KEY (screening_id) REFERENCES donor_health_screenings(id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS outreach_campaigns (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -528,32 +556,72 @@ async function applySecurityMigrations(): Promise<void> {
   );
   const migrationId = "2026-07-13-security-session-hashing-and-mfa";
   const alreadyApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [migrationId]);
-  if (alreadyApplied) return;
-  if (!(await columnExists("users", "account_status"))) {
-    await execute("ALTER TABLE users ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active' AFTER verified_at");
+  if (!alreadyApplied) {
+    if (!(await columnExists("users", "account_status"))) {
+      await execute("ALTER TABLE users ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active' AFTER verified_at");
+    }
+    if (!(await columnExists("users", "mfa_secret_encrypted"))) {
+      await execute("ALTER TABLE users ADD COLUMN mfa_secret_encrypted TEXT NULL AFTER account_status");
+    }
+    if (!(await columnExists("users", "mfa_enabled_at"))) {
+      await execute("ALTER TABLE users ADD COLUMN mfa_enabled_at VARCHAR(40) NULL AFTER mfa_secret_encrypted");
+    }
+    await execute(
+      `CREATE TABLE IF NOT EXISTS auth_challenges (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        token_hash VARCHAR(128) NOT NULL,
+        user_id BIGINT UNSIGNED NOT NULL,
+        purpose VARCHAR(40) NOT NULL,
+        expires_at VARCHAR(40) NOT NULL,
+        created_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY uq_auth_challenge_token (token_hash),
+        KEY idx_auth_challenge_expiry (expires_at),
+        CONSTRAINT fk_auth_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`
+    );
+    // Earlier releases stored raw session tokens. Invalidate them once so only hashes remain after migration.
+    await execute("DELETE FROM sessions");
+    await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [migrationId, now()]);
   }
-  if (!(await columnExists("users", "mfa_secret_encrypted"))) {
-    await execute("ALTER TABLE users ADD COLUMN mfa_secret_encrypted TEXT NULL AFTER account_status");
-  }
-  if (!(await columnExists("users", "mfa_enabled_at"))) {
-    await execute("ALTER TABLE users ADD COLUMN mfa_enabled_at VARCHAR(40) NULL AFTER mfa_secret_encrypted");
+
+  const donorScreeningMigrationId = "2026-07-13-donor-screening-and-derived-age";
+  const donorScreeningApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [donorScreeningMigrationId]);
+  if (donorScreeningApplied) return;
+  if (!(await columnExists("donor_profiles", "date_of_birth"))) {
+    await execute("ALTER TABLE donor_profiles ADD COLUMN date_of_birth VARCHAR(10) NULL AFTER district");
   }
   await execute(
-    `CREATE TABLE IF NOT EXISTS auth_challenges (
+    `CREATE TABLE IF NOT EXISTS donor_health_screenings (
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      token_hash VARCHAR(128) NOT NULL,
-      user_id BIGINT UNSIGNED NOT NULL,
-      purpose VARCHAR(40) NOT NULL,
-      expires_at VARCHAR(40) NOT NULL,
+      donor_user_id BIGINT UNSIGNED NOT NULL,
+      questionnaire_version VARCHAR(40) NOT NULL,
+      eligibility_status VARCHAR(40) NOT NULL,
+      medical_data_consent_at VARCHAR(40) NOT NULL,
+      submitted_at VARCHAR(40) NOT NULL,
+      reviewed_by_user_id BIGINT UNSIGNED NULL,
+      reviewed_at VARCHAR(40) NULL,
+      review_reason VARCHAR(500) NULL,
       created_at VARCHAR(40) NOT NULL,
-      UNIQUE KEY uq_auth_challenge_token (token_hash),
-      KEY idx_auth_challenge_expiry (expires_at),
-      CONSTRAINT fk_auth_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      updated_at VARCHAR(40) NOT NULL,
+      UNIQUE KEY uq_donor_screening_version (donor_user_id, questionnaire_version),
+      KEY idx_donor_screening_status (eligibility_status, updated_at),
+      CONSTRAINT fk_screening_donor FOREIGN KEY (donor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_screening_reviewer FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id)
     )`
   );
-  // Earlier releases stored raw session tokens. Invalidate them once so only hashes remain after migration.
-  await execute("DELETE FROM sessions");
-  await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [migrationId, now()]);
+  await execute(
+    `CREATE TABLE IF NOT EXISTS donor_screening_answers (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      screening_id BIGINT UNSIGNED NOT NULL,
+      question_key VARCHAR(80) NOT NULL,
+      answer VARCHAR(20) NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      updated_at VARCHAR(40) NOT NULL,
+      UNIQUE KEY uq_screening_question (screening_id, question_key),
+      CONSTRAINT fk_screening_answer_screening FOREIGN KEY (screening_id) REFERENCES donor_health_screenings(id) ON DELETE CASCADE
+    )`
+  );
+  await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [donorScreeningMigrationId, now()]);
 }
 
 export function hashDocument(buffer: Buffer): string {

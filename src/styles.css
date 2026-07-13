@@ -260,6 +260,10 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .donor-blood > span { font-size: 77px; }
 .donor-blood p { margin: 0; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
 .donor-blood small { font-weight: 500; font-size: 10px; }
+.donor-age { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 12px; margin: 16px 0; padding: 12px; border: 1px solid #c6d4dc; color: #20516c; background: #edf5f7; }
+.donor-age span { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.donor-age b { font-family: var(--display); font-size: 31px; line-height: 1; }
+.donor-age small { grid-column: 1 / -1; color: #477083; font-size: 10px; }
 .donor-form { grid-template-columns: 1fr 1fr; margin-top: 19px; }
 .consent-toggle { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; margin-top: 18px; padding: 12px; border: 1px solid var(--line); background: #f5efe5; cursor: pointer; }
 .consent-toggle input { width: 18px; min-height: 18px; margin: 1px 0 0; accent-color: var(--signal); }
@@ -276,6 +280,14 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .invite-actions { display: grid; gap: 7px; justify-items: stretch; min-width: 155px; }
 .invite-actions .button { min-height: 34px; padding: 7px 10px; font-size: 10px; }
 .invite-actions .text-button { justify-self: center; font-size: 10px; }
+.screening-card { grid-column: 1 / -1; }
+.screening-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 20px 0; padding: 12px; border: 1px solid #c6d4dc; background: #edf5f7; }
+.screening-status > span { color: #477083; font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.screening-status small { margin-left: auto; color: #477083; font-size: 10px; }
+.screening-question-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.screening-question-list label { min-height: 118px; align-content: space-between; padding: 13px; border: 1px solid var(--line); background: #fffdf8; }
+.screening-question-list label > span { color: var(--ink); font-size: 11px; font-weight: 600; letter-spacing: 0; line-height: 1.5; }
+.screening-consent { margin-top: 14px; }
 
 .facility-workspace { margin-top: 2px; }
 .blood-centre-heading { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 17px; padding: 21px; border: 1px solid var(--line); background: #fffdf8; }
@@ -314,6 +326,14 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .donor-contact-actions .button { text-decoration: none; }
 .donor-contact-actions > span { font-family: var(--mono); font-size: 10px; }
 .donor-contact-actions small { text-align: right; }
+.screening-review { display: grid; gap: 11px; margin-top: 15px; padding: 13px; border: 1px solid #c6d4dc; background: #edf5f7; }
+.screening-review > b { color: #20516c; font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.screening-answer-list { display: grid; gap: 7px; }
+.screening-answer-list p { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; margin: 0; padding-bottom: 7px; border-bottom: 1px solid #c6d4dc; color: #315a6b; font-size: 10px; }
+.screening-answer-list strong { color: #20516c; text-transform: capitalize; }
+.screening-review-controls { display: grid; grid-template-columns: minmax(150px, 0.8fr) minmax(160px, 1.2fr) auto; gap: 8px; align-items: end; }
+.screening-review-controls .button { min-height: 40px; padding: 8px 10px; font-size: 10px; }
+.screening-empty { margin: 0; color: #477083; font-size: 10px; }
 .inventory-list { display: grid; gap: 0; margin-top: 18px; }
 .inventory-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); }
 .inventory-row > div { display: flex; gap: 8px; align-items: baseline; }
@@ -421,10 +441,12 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .blood-centre-heading { align-items: flex-start; flex-direction: column; }
   .blood-centre-heading > span { max-width: none; text-align: left; }
   .form-grid, .donor-form { grid-template-columns: 1fr; }
+  .screening-question-list { grid-template-columns: 1fr; }
   .full-field { grid-column: auto; }
   .facility-stats { grid-template-columns: 1fr 1fr; }
   .facility-stats article { min-height: 89px; padding: 13px; }
   .transition-row, .note-row { grid-template-columns: 1fr; }
+  .screening-review-controls { grid-template-columns: 1fr; }
   .transition-row .button, .note-row .button { width: 100%; }
   .invite { align-items: flex-start; flex-direction: column; }
   .invite-actions { width: 100%; }

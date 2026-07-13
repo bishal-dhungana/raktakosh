@@ -109,6 +109,19 @@ export interface DonorProfile {
   preScreeningResult: string;
   policyVersion: string;
   lastDonationDate: string | null;
+  dateOfBirth: string | null;
+  age: number | null;
+  eligibilityStatus: DonorEligibilityStatus;
+}
+
+export interface DonorScreening {
+  questionnaireVersion: string;
+  eligibilityStatus: DonorEligibilityStatus;
+  consentedAt: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  reviewReason: string | null;
+  answers: Partial<Record<DonorScreeningQuestionKey, DonorScreeningAnswer>>;
 }
 
 export interface Invitation {
@@ -137,6 +150,7 @@ export interface FacilityCase extends BloodRequest {
 
 export interface FacilityDonorResponse {
   recipientId: number;
+  donorUserId: number;
   campaignId: number;
   requestReference: string;
   donorName: string;
@@ -147,6 +161,8 @@ export interface FacilityDonorResponse {
   district: string;
   contactWindow: string;
   respondedAt: string;
+  age: number | null;
+  eligibilityStatus: DonorEligibilityStatus;
 }
 
 export interface FacilityOperations extends FacilityDashboard {
@@ -165,3 +181,4 @@ export interface AdminOverview {
   policies: Array<{ id: number; name: string; version: string; effectiveAt: string; summary: string }>;
   auditEvents: Array<{ id: number; action: string; entityType: string; entityId: string; actorName: string; createdAt: string }>;
 }
+import type { DonorEligibilityStatus, DonorScreeningAnswer, DonorScreeningQuestionKey } from "./donor-screening";
