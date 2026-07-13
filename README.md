@@ -26,9 +26,9 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 - Private blood-request creation with a mandatory malware-scanned verification document, status tracking, event timelines, and facility review workflows.
 - Donor registration, consent controls, availability preferences, and privacy-minimised outreach invitations.
 - Facility inventory updates with adjustment history, public-visibility controls, and stale-record indicators.
-- A dedicated **Blood Bank staff sign-in** for issued facility accounts and mandatory first-password replacement.
+- A dedicated **Blood Bank staff sign-in** for issued facility accounts and mandatory first-password replacement; authenticator verification applies only to the Super Admin.
 - Role-aware workspaces for requesters, donors, Blood Bank inventory managers, Blood Bank reviewers, Blood Bank administrators, and platform administrators.
-- Account sessions, CSRF protection, rate limiting, audit events, and forced replacement of issued temporary passwords.
+- Account sessions, CSRF protection, rate limiting, audit events, Super Admin authenticator verification, and forced replacement of issued temporary passwords.
 - English/Nepali public-interface support and Nepal time-zone display.
 
 ## User roles
@@ -47,7 +47,7 @@ Blood Bank staff accounts are issued by the platform or verified facility admini
 
 ## Multi-tenant Blood Bank management
 
-The platform administrator is the **Super Admin**. From the governance workspace, the Super Admin can create an isolated Blood Bank tenant and issue its first Blood Bank Admin email and temporary password. The tenant admin must replace that temporary password before the dashboard allows access to any tenant data. Each tenant remains restricted to its own facility-scoped requests, availability, documents, and consented donor responses.
+The platform administrator is the **Super Admin**. The Super Admin uses an authenticator app; Blood Bank branches do not. From the governance workspace, the Super Admin can create an isolated Blood Bank tenant and issue its first Blood Bank Admin email and temporary password. The tenant admin must replace that temporary password before the dashboard allows access to any tenant data. Each tenant remains restricted to its own facility-scoped requests, availability, documents, and consented donor responses.
 
 See [Multi-tenant Blood Bank management](docs/MULTI-TENANCY.md) for the full provisioning and first-sign-in flow.
 
@@ -166,6 +166,7 @@ Copy `.env.example` rather than creating configuration from scratch. The table b
 | `NODE_ENV` | Yes | Set to `development` locally and `production` on Render. |
 | `FRONTEND_ORIGIN` | Production | Exact deployed frontend origin used by CORS and cookie controls. |
 | `CSRF_SECRET` | Production | Long random secret used to validate state-changing browser requests. |
+| `MFA_ENCRYPTION_KEY` | Production | Base64-encoded 32-byte key used only to encrypt the Super Admin authenticator secret. |
 | `DATABASE_SSL` | Recommended | Keep TLS enabled for hosted databases; set `false` only for a trusted local database. |
 | `TIDB_CA_CERT` | Optional | CA certificate content when the database service requires it. |
 | `SESSION_HOURS` | Optional | Authenticated session lifetime; defaults to 24 hours. |
@@ -207,7 +208,7 @@ Vercel React frontend → Render Express API → TiDB Cloud / MySQL
 3. Set `FRONTEND_ORIGIN` to the exact Vercel URL.
 4. Configure `VITE_API_BASE_URL` in Vercel for Production, Preview, and Development.
 5. Deploy the API, then verify `/api/health` reports `status: ok` and `database: connected`.
-6. Deploy the Vercel frontend and have issued staff replace their temporary password on first sign-in.
+6. Deploy the Vercel frontend, enroll the Super Admin authenticator, and have issued Blood Bank staff replace their temporary password on first sign-in.
 
 For exact environment-variable guidance, privileges, and deployment order, use the [Deployment Guide](docs/DEPLOYMENT.md).
 

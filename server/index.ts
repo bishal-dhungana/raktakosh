@@ -25,11 +25,14 @@ import type {
 import {
   SESSION_HOURS,
   STALE_AFTER_HOURS,
+  consumeAuthChallenge,
+  createAuthChallenge,
   createNotification,
   createSession,
   deleteSession,
   deleteUserSessions,
   execute,
+  getAuthChallenge,
   getAuthUserByEmail,
   getAuthUserById,
   getCurrentUser,
@@ -38,13 +41,16 @@ import {
   initializeDatabase,
   one,
   query,
+  setMfaSecret,
   csrfTokenFor,
   transaction,
+  enableMfa,
   verifyCsrfToken,
   verifyPassword,
   writeAudit
 } from "./db";
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
+import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
 import { canViewFacilityCasework, isBloodBankStaff } from "./facility-access";
 import {
   DONOR_SCREENING_QUESTIONS,
@@ -222,6 +228,10 @@ async function requestDocuments(requestId: number): Promise<NonNullable<BloodReq
      ORDER BY created_at DESC`,
     [requestId]
   );
+}
+
+function requiresSuperAdminMfa(role: UserRole): boolean {
+  return role === "platform_admin";
 }
 
 async function requestDocumentForAccess(documentId: number): Promise<RequestDocumentAccessRow | undefined> {
@@ -496,6 +506,12 @@ async function completeLogin(req: Request, res: Response, staffOnly: boolean): P
     await writeAudit(user.id, "blood_bank_login_denied", "account", user.id, { source: clientIp(req), reason: "not_blood_bank_staff" });
     return apiError(res, 403, "This is the Blood Bank staff sign-in. Use the standard account sign-in for this account.");
   }
+  if (requiresSuperAdminMfa(user.role)) {
+    const purpose = user.mfaEnabledAt && user.mfaSecretEncrypted ? "super_admin_mfa_verify" : "super_admin_mfa_enroll";
+    const challengeToken = await createAuthChallenge(user.id, purpose);
+    res.json({ mfaRequired: purpose === "super_admin_mfa_verify", mfaEnrollmentRequired: purpose === "super_admin_mfa_enroll", mfaChallengeToken: challengeToken });
+    return;
+  }
   const session = await createSession(user.id);
   const viewer = await getCurrentUser(session.token);
   await writeAudit(user.id, staffOnly ? "blood_bank_login_succeeded" : "login_succeeded", "account", user.id, { source: clientIp(req) });
@@ -512,6 +528,51 @@ app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
 app.post("/api/auth/blood-bank/login", authRateLimit, async (req, res, next) => {
   try {
     await completeLogin(req, res, true);
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/enroll/start", authRateLimit, async (req, res, next) => {
+  try {
+    const challengeToken = text(req.body?.challengeToken, 128);
+    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "super_admin_mfa_enroll") : undefined;
+    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
+    if (!challenge || !user || user.accountStatus !== "active" || !requiresSuperAdminMfa(user.role)) return apiError(res, 401, "The Super Admin sign-in step has expired. Start again.");
+    const secret = generateTotpSecret();
+    await setMfaSecret(user.id, encryptMfaSecret(secret));
+    res.json({ secret, otpauthUri: totpUri(user.email, secret) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/enroll/confirm", authRateLimit, async (req, res, next) => {
+  try {
+    const challengeToken = text(req.body?.challengeToken, 128);
+    const code = text(req.body?.code, 8);
+    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "super_admin_mfa_enroll") : undefined;
+    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
+    if (!challenge || !user || !user.mfaSecretEncrypted || !verifyTotp(decryptMfaSecret(user.mfaSecretEncrypted), code)) return apiError(res, 401, "The authenticator code is not correct or has expired.");
+    await enableMfa(user.id);
+    await consumeAuthChallenge(challengeToken);
+    const session = await createSession(user.id);
+    const viewer = await getCurrentUser(session.token);
+    await writeAudit(user.id, "super_admin_mfa_enrolled", "account", user.id, { source: clientIp(req) });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.json({ user: viewer, csrfToken: session.csrfToken });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/verify", authRateLimit, async (req, res, next) => {
+  try {
+    const challengeToken = text(req.body?.challengeToken, 128);
+    const code = text(req.body?.code, 8);
+    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "super_admin_mfa_verify") : undefined;
+    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
+    if (!challenge || !user || !user.mfaSecretEncrypted || !user.mfaEnabledAt || !verifyTotp(decryptMfaSecret(user.mfaSecretEncrypted), code)) return apiError(res, 401, "The authenticator code is not correct or has expired.");
+    await consumeAuthChallenge(challengeToken);
+    const session = await createSession(user.id);
+    const viewer = await getCurrentUser(session.token);
+    await writeAudit(user.id, "super_admin_mfa_verified", "account", user.id, { source: clientIp(req) });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.json({ user: viewer, csrfToken: session.csrfToken });
   } catch (error) { next(error); }
 });
 
@@ -1241,14 +1302,15 @@ app.get("/api/admin/overview", requireAuth, requireRoles("platform_admin"), asyn
       `SELECT a.id, a.action, a.entity_type as entityType, a.entity_id as entityId, COALESCE(u.name, 'System') as actorName, a.created_at as createdAt
        FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id ORDER BY a.created_at DESC, a.id DESC LIMIT 20`
     );
-    const staff = await query<Omit<AdminOverview["staff"][number], "passwordChangeRequired"> & { passwordChangeRequired: number }>(
+    const staff = await query<Omit<AdminOverview["staff"][number], "mfaEnabled" | "passwordChangeRequired"> & { mfaEnabled: number; passwordChangeRequired: number }>(
       `SELECT u.id, u.name, u.email, u.role, u.account_status as accountStatus, f.name as facilityName,
+              CASE WHEN u.mfa_enabled_at IS NULL THEN 0 ELSE 1 END as mfaEnabled,
               CASE WHEN u.password_change_required_at IS NULL THEN 0 ELSE 1 END as passwordChangeRequired
        FROM users u LEFT JOIN facilities f ON f.id = u.facility_id
        WHERE u.role IN ('platform_admin', 'facility_admin', 'reviewer', 'inventory_manager')
        ORDER BY u.role, u.name`
     );
-    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, passwordChangeRequired: Boolean(member.passwordChangeRequired) })) } satisfies AdminOverview });
+    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, mfaEnabled: Boolean(member.mfaEnabled), passwordChangeRequired: Boolean(member.passwordChangeRequired) })) } satisfies AdminOverview });
   } catch (error) { next(error); }
 });
 

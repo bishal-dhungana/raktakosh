@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { execute, getPool, hashPassword, one, query, verifyPassword } from "../server/db";
 
 if (process.env.RUN_LIVE_TENANT_TEST !== "true") {
@@ -20,6 +20,30 @@ const replacementPassword = "BranchOwn#2026!";
 
 type Session = { cookie: string; csrfToken: string; user: { passwordChangeRequired: boolean } };
 
+function totpCode(secret: string): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const normalized = secret.replace(/[\s=-]/g, "").toUpperCase();
+  let bits = 0;
+  let current = 0;
+  const bytes: number[] = [];
+  for (const character of normalized) {
+    const index = alphabet.indexOf(character);
+    if (index < 0) throw new Error("Invalid test TOTP secret.");
+    current = (current << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((current >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)));
+  const digest = createHmac("sha1", Buffer.from(bytes)).update(counterBuffer).digest();
+  const offset = digest[digest.length - 1] & 15;
+  const value = ((digest[offset] & 127) << 24) | (digest[offset + 1] << 16) | (digest[offset + 2] << 8) | digest[offset + 3];
+  return String(value % 1_000_000).padStart(6, "0");
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<{ body: T; response: Response }> {
   const headers = new Headers(init.headers);
   headers.set("Origin", origin);
@@ -35,6 +59,16 @@ async function login(email: string, password: string, staffOnly = false): Promis
   const cookie = login.response.headers.get("set-cookie")?.split(";", 1)[0];
   if (!cookie || !login.body.csrfToken) throw new Error("Password sign-in did not establish a session.");
   return { cookie, csrfToken: login.body.csrfToken, user: login.body.user };
+}
+
+async function loginSuperAdmin(email: string, password: string): Promise<Session> {
+  const started = await request<{ mfaEnrollmentRequired?: boolean; mfaChallengeToken?: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+  if (!started.body.mfaEnrollmentRequired || !started.body.mfaChallengeToken) throw new Error("Super Admin authenticator enrollment was not required.");
+  const setup = await request<{ secret: string }>("/api/auth/mfa/enroll/start", { method: "POST", body: JSON.stringify({ challengeToken: started.body.mfaChallengeToken }) });
+  const confirmed = await request<{ user: { passwordChangeRequired: boolean }; csrfToken: string }>("/api/auth/mfa/enroll/confirm", { method: "POST", body: JSON.stringify({ challengeToken: started.body.mfaChallengeToken, code: totpCode(setup.body.secret) }) });
+  const cookie = confirmed.response.headers.get("set-cookie")?.split(";", 1)[0];
+  if (!cookie || !confirmed.body.csrfToken) throw new Error("Super Admin authenticator confirmation did not establish a session.");
+  return { cookie, csrfToken: confirmed.body.csrfToken, user: confirmed.body.user };
 }
 
 async function cleanup(): Promise<void> {
@@ -57,7 +91,7 @@ try {
     [superEmail, hashPassword(superPassword), createdAt, createdAt, createdAt]
   );
 
-  const superSession = await login(superEmail, superPassword);
+  const superSession = await loginSuperAdmin(superEmail, superPassword);
   if (superSession.user.passwordChangeRequired) throw new Error("Temporary QA Super Admin should not require a password change.");
   const createdTenant = await request<{ tenant: { facilityId: number; facilityName: string; adminEmail: string } }>("/api/admin/tenants", {
     method: "POST",

@@ -14,6 +14,8 @@ Each `facility` is one Blood Bank tenant. Every Blood Bank staff account is link
 
 The temporary password is hashed immediately and is never returned by the API or stored in readable form.
 
+The Super Admin signs in through the normal account screen and uses an authenticator app. Blood Bank branches do not use MFA.
+
 ## First Blood Bank Admin sign-in
 
 1. The branch opens **Blood Bank portal** and signs in with the issued email and temporary password.
@@ -33,7 +35,7 @@ Super Admin may activate a branch for operations during provisioning. Activating
 
 ## Live verification
 
-The repository includes a guarded end-to-end verifier. It creates temporary Super Admin and Blood Bank tenant records, verifies provisioning, temporary-password lockout, password replacement, session rotation, and facility-scoped dashboard access, then removes its temporary records.
+The repository includes a guarded end-to-end verifier. It creates temporary Super Admin and Blood Bank tenant records, verifies Super Admin authenticator enrollment, provisioning, temporary-password lockout, password replacement, session rotation, and facility-scoped dashboard access, then removes its temporary records.
 
 It runs only when explicitly enabled:
 
