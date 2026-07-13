@@ -1,6 +1,5 @@
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -38,7 +37,6 @@ import {
   getAuthUserById,
   getCurrentUser,
   getPool,
-  hashDocument,
   hashPassword,
   initializeDatabase,
   one,
@@ -64,6 +62,21 @@ import {
   type DonorEligibilityStatus
 } from "../src/donor-screening";
 import { isNepalDistrict } from "../src/nepal-districts";
+import {
+  DocumentWorkflowError,
+  documentObjectKey,
+  documentRetentionUntil,
+  documentWorkflowEnabled,
+  documentWorkflowUnavailableMessage,
+  safeDocumentName,
+  scanDocument,
+  sha256,
+  signedDocumentDownload,
+  storeCleanDocument,
+  removeStoredDocument,
+  validateDocument,
+  type SupportedDocumentMime
+} from "./document-storage";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8787);
@@ -75,11 +88,6 @@ const validComponents = new Set(["Whole blood", "Packed red cells", "Platelets",
 const facilityRoles = new Set<UserRole>(["inventory_manager", "reviewer", "facility_admin"]);
 const localOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
 const sessionCookieName = "__Host-rk_session";
-// Local disk is only acceptable for a developer workstation. Production uploads stay disabled
-// until a private object-storage adapter and malware-scanning pipeline are configured.
-const documentStorageEnabled = !isProduction;
-const uploadsDirectory = join(process.cwd(), "storage", "uploads");
-mkdirSync(uploadsDirectory, { recursive: true });
 
 interface AuthRequest extends Request {
   viewer?: CurrentUser;
@@ -113,6 +121,30 @@ type FacilityCaseRow = RequestRow & { requesterName: string; requesterPhone: str
 type FacilityDonorResponseRow = Omit<FacilityOperations["donorResponses"][number], "age"> & { dateOfBirth: string | null };
 type DonorScreeningRow = Omit<DonorScreening, "answers">;
 type DonorScreeningAnswerRow = { questionKey: string; answer: string };
+type RequestDocumentRow = {
+  id: number;
+  requestId: number;
+  uploaderUserId: number;
+  originalName: string;
+  storageName: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  scanStatus: "clean" | "malicious" | "scan_error" | "pending";
+  reviewStatus: "pending" | "accepted" | "rejected";
+  reviewedAt: string | null;
+  reviewedByUserId: number | null;
+  reviewNote: string | null;
+  retentionUntil: string;
+  createdAt: string;
+  deletedAt: string | null;
+};
+type RequestDocumentAccessRow = RequestDocumentRow & {
+  requesterId: number;
+  facilityId: number;
+  requestReference: string;
+  requestStatus: RequestStatus;
+};
 
 function apiError(res: Response, status: number, error: string): void {
   res.status(status).json({ error });
@@ -190,9 +222,34 @@ async function requestEvents(requestId: number): Promise<BloodRequest["events"]>
 
 async function requestDocuments(requestId: number): Promise<NonNullable<BloodRequest["documents"]>> {
   return query<NonNullable<BloodRequest["documents"]>[number]>(
-    "SELECT id, original_name as originalName, scan_status as scanStatus, created_at as createdAt FROM request_documents WHERE request_id = ? ORDER BY created_at DESC",
+    `SELECT id, original_name as originalName, mime_type as mimeType, byte_size as byteSize,
+            scan_status as scanStatus, review_status as reviewStatus, created_at as createdAt, reviewed_at as reviewedAt
+     FROM request_documents
+     WHERE request_id = ? AND deleted_at IS NULL
+     ORDER BY created_at DESC`,
     [requestId]
   );
+}
+
+async function requestDocumentForAccess(documentId: number): Promise<RequestDocumentAccessRow | undefined> {
+  return one<RequestDocumentAccessRow>(
+    `SELECT d.id, d.request_id as requestId, d.uploader_user_id as uploaderUserId, d.original_name as originalName,
+            d.storage_name as storageName, d.mime_type as mimeType, d.byte_size as byteSize, d.sha256,
+            d.scan_status as scanStatus, d.review_status as reviewStatus, d.reviewed_at as reviewedAt,
+            d.reviewed_by_user_id as reviewedByUserId, d.review_note as reviewNote, d.retention_until as retentionUntil,
+            d.created_at as createdAt, d.deleted_at as deletedAt, br.requester_id as requesterId, br.facility_id as facilityId,
+            br.reference as requestReference, br.status as requestStatus
+     FROM request_documents d
+     JOIN blood_requests br ON br.id = d.request_id
+     WHERE d.id = ? LIMIT 1`,
+    [documentId]
+  );
+}
+
+function mayViewDocument(viewer: CurrentUser, document: RequestDocumentAccessRow): boolean {
+  if (viewer.role === "platform_admin") return true;
+  if (viewer.id === document.requesterId) return true;
+  return canViewFacilityCasework(viewer.role) && viewer.facilityId === document.facilityId;
 }
 
 async function requestNotes(requestId: number): Promise<NonNullable<BloodRequest["internalNotes"]>> {
@@ -557,7 +614,17 @@ app.get("/api/public/facilities", async (_req, res, next) => {
 });
 
 app.get("/api/public/config", (_req, res) => {
-  res.json({ documentUploadsEnabled: documentStorageEnabled });
+  res.json({
+    documentUploadsEnabled: documentWorkflowEnabled(),
+    documentUploadRequired: true,
+    documentUploadMessage: documentWorkflowEnabled() ? null : documentWorkflowUnavailableMessage()
+  });
+});
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => callback(null, new Set(["application/pdf", "image/jpeg", "image/png"]).has(file.mimetype))
 });
 
 app.get("/api/requests", requireAuth, async (req: AuthRequest, res, next) => {
@@ -577,8 +644,9 @@ app.get("/api/requests", requireAuth, async (req: AuthRequest, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "donor"), writeRateLimit, async (req: AuthRequest, res, next) => {
+app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "donor"), writeRateLimit, upload.single("document"), async (req: AuthRequest, res, next) => {
   try {
+    if (!documentWorkflowEnabled()) return apiError(res, 503, documentWorkflowUnavailableMessage());
     const viewer = req.viewer!;
     const facilityId = positiveInteger(req.body?.facilityId);
     const quantity = positiveInteger(req.body?.quantity);
@@ -592,6 +660,7 @@ app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "d
     const neededBy = text(req.body?.neededBy, 40);
     const clientToken = text(req.body?.clientToken, 100);
     if (!facilityId || !quantity || !patientInitials || !relationship || !validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !urgency || !isNepalDistrict(district) || !neededBy) return apiError(res, 400, "Complete all required request fields with a valid Nepal district, supported blood group, and component.");
+    if (!req.file) return apiError(res, 400, "A hospital slip, prescription, or blood-request PDF/JPG/PNG is required before a request can be submitted.");
     const requiredBy = new Date(neededBy);
     if (Number.isNaN(requiredBy.getTime()) || requiredBy.getTime() <= Date.now()) return apiError(res, 400, "Choose a future needed-by date and time.");
     const facility = await one<{ id: number }>("SELECT id FROM facilities WHERE id = ? AND verification_status = 'verified' AND accepts_requests = 1 LIMIT 1", [facilityId]);
@@ -603,47 +672,137 @@ app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "d
         if (existing) return res.json({ request: await requestDto(existing), duplicate: true });
       }
     }
+
+    const mimeType = validateDocument(req.file.buffer, req.file.mimetype);
+    const originalName = safeDocumentName(req.file.originalname, mimeType);
+    const checksum = sha256(req.file.buffer);
+    await scanDocument(req.file.buffer, mimeType, checksum);
     const createdAt = new Date().toISOString();
-    const result = await execute(
-      `INSERT INTO blood_requests (reference, requester_id, facility_id, client_token, patient_initials, requester_relationship, blood_group, rh_factor, component, quantity, urgency, district, needed_by, status, requester_visible_message, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?)`,
-      [makeRequestReference(), viewer.id, facilityId, clientToken || null, patientInitials, relationship, bloodGroup, rhFactor, component, quantity, urgency, district, requiredBy.toISOString(), "Your request has been submitted for facility review. It is not a reservation or medical confirmation.", createdAt, createdAt]
-    );
-    const requestId = Number(result.insertId);
-    await addRequestEvent(requestId, null, "submitted", "Request submitted for facility review.", viewer.id);
-    await notifyReviewers(facilityId, "New coordination request", "A new request needs facility review.");
-    await writeAudit(viewer.id, "request_submitted", "blood_request", requestId, { facilityId, bloodGroup, component, quantity });
+    const reference = makeRequestReference();
+    const storageName = documentObjectKey(reference, mimeType);
+    await storeCleanDocument({ key: storageName, buffer: req.file.buffer, mimeType, originalName, checksum });
+    let requestId: number;
+    let documentId: number;
+    try {
+      ({ requestId, documentId } = await transaction(async (connection) => {
+        const [requestResult] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO blood_requests (reference, requester_id, facility_id, client_token, patient_initials, requester_relationship, blood_group, rh_factor, component, quantity, urgency, district, needed_by, status, requester_visible_message, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'document_pending_review', ?, ?, ?)`,
+          [reference, viewer.id, facilityId, clientToken || null, patientInitials, relationship, bloodGroup, rhFactor, component, quantity, urgency, district, requiredBy.toISOString(), "Your verification document passed security screening and is pending facility review.", createdAt, createdAt]
+        );
+        const createdRequestId = Number(requestResult.insertId);
+        const [documentResult] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, scan_provider, scanned_at, review_status, reviewed_by_user_id, reviewed_at, review_note, retention_until, deleted_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'clean', 'clamav', ?, 'pending', NULL, NULL, NULL, ?, NULL, ?)`,
+          [createdRequestId, viewer.id, originalName, storageName, mimeType, req.file!.size, checksum, createdAt, documentRetentionUntil(new Date(createdAt)), createdAt]
+        );
+        await connection.execute(
+          "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, NULL, 'document_pending_review', ?, ?, ?)",
+          [createdRequestId, "Verification document scanned clean and is pending facility review.", viewer.id, createdAt]
+        );
+        return { requestId: createdRequestId, documentId: Number(documentResult.insertId) };
+      }));
+    } catch (error) {
+      await removeStoredDocument(storageName).catch(() => undefined);
+      throw error;
+    }
+    await notifyReviewers(facilityId, "Verification document pending review", `Request ${reference} has a clean verification document awaiting review.`);
+    await writeAudit(viewer.id, "request_submitted_with_document", "blood_request", requestId, { facilityId, bloodGroup, component, quantity, documentId, documentSha256: checksum });
     const row = await requestRow(requestId);
     res.status(201).json({ request: await requestDto(row!) });
   } catch (error) { next(error); }
 });
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, callback) => callback(null, new Set(["application/pdf", "image/jpeg", "image/png"]).has(file.mimetype))
-});
-
-app.post("/api/requests/:id/document", requireAuth, requireCsrf, upload.single("document"), async (req: AuthRequest, res, next) => {
+app.post("/api/requests/:id/documents", requireAuth, requireCsrf, requireRoles("requester", "donor"), writeRateLimit, upload.single("document"), async (req: AuthRequest, res, next) => {
   try {
-    if (!documentStorageEnabled) return apiError(res, 503, "Supporting document upload is unavailable until private object storage and malware scanning are configured.");
+    if (!documentWorkflowEnabled()) return apiError(res, 503, documentWorkflowUnavailableMessage());
     const requestId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
-    if (!requestId) return apiError(res, 400, "Invalid request identifier.");
+    if (!requestId || !req.file) return apiError(res, 400, "Upload one replacement PDF, JPG, or PNG document up to 5 MB.");
     const row = await requestRow(requestId);
-    if (!row || !mayAccessRequest(viewer, row)) return apiError(res, 404, "Request not found.");
-    if (viewer.id !== row.requester_id && viewer.role !== "platform_admin") return apiError(res, 403, "Only the requester may add a supporting document.");
-    if (!req.file) return apiError(res, 400, "Upload a PDF, JPG, JPEG, or PNG file up to 5 MB.");
-    const extension = req.file.mimetype === "application/pdf" ? ".pdf" : req.file.mimetype === "image/png" ? ".png" : ".jpg";
-    const storageName = `${randomUUID()}${extension}`;
-    writeFileSync(join(uploadsDirectory, storageName), req.file.buffer, { flag: "wx" });
+    if (!row || viewer.id !== row.requester_id) return apiError(res, 404, "Request not found.");
+    if (row.status !== "needs_information") return apiError(res, 409, "A replacement document can be added only when the facility has requested more information.");
+    const mimeType = validateDocument(req.file.buffer, req.file.mimetype);
+    const originalName = safeDocumentName(req.file.originalname, mimeType);
+    const checksum = sha256(req.file.buffer);
+    await scanDocument(req.file.buffer, mimeType, checksum);
     const createdAt = new Date().toISOString();
-    const documentResult = await execute(
-      "INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_validation', ?)",
-      [requestId, viewer.id, text(req.file.originalname, 160) || `supporting-document${extension}`, storageName, req.file.mimetype, req.file.size, hashDocument(req.file.buffer), createdAt]
-    );
-    await writeAudit(viewer.id, "document_uploaded", "request_document", Number(documentResult.insertId), { requestId, mimeType: req.file.mimetype, size: req.file.size });
-    res.status(201).json({ document: { id: Number(documentResult.insertId), originalName: text(req.file.originalname, 160), scanStatus: "pending_validation", createdAt } });
+    const storageName = documentObjectKey(row.reference, mimeType);
+    await storeCleanDocument({ key: storageName, buffer: req.file.buffer, mimeType, originalName, checksum });
+    let documentId: number;
+    try {
+      ({ documentId } = await transaction(async (connection) => {
+        const [documentResult] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, scan_provider, scanned_at, review_status, reviewed_by_user_id, reviewed_at, review_note, retention_until, deleted_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'clean', 'clamav', ?, 'pending', NULL, NULL, NULL, ?, NULL, ?)`,
+          [requestId, viewer.id, originalName, storageName, mimeType, req.file!.size, checksum, createdAt, documentRetentionUntil(new Date(createdAt)), createdAt]
+        );
+        await connection.execute("UPDATE blood_requests SET status = 'document_pending_review', requester_visible_message = ?, updated_at = ? WHERE id = ?", ["Your replacement verification document passed security screening and is pending facility review.", createdAt, requestId]);
+        await connection.execute(
+          "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, 'needs_information', 'document_pending_review', ?, ?, ?)",
+          [requestId, "Replacement verification document scanned clean and is pending facility review.", viewer.id, createdAt]
+        );
+        return { documentId: Number(documentResult.insertId) };
+      }));
+    } catch (error) {
+      await removeStoredDocument(storageName).catch(() => undefined);
+      throw error;
+    }
+    await notifyReviewers(row.facility_id, "Replacement verification document pending review", `Request ${row.reference} has a new clean document awaiting review.`);
+    await writeAudit(viewer.id, "replacement_document_uploaded", "request_document", documentId, { requestId, documentSha256: checksum });
+    res.status(201).json({ request: await requestDto((await requestRow(requestId))!) });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/request-documents/:id/download", requireAuth, async (req: AuthRequest, res, next) => {
+  try {
+    const documentId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    if (!documentId) return apiError(res, 404, "Document not found.");
+    const document = await requestDocumentForAccess(documentId);
+    if (!document || document.deletedAt || !mayViewDocument(viewer, document)) return apiError(res, 404, "Document not found.");
+    if (document.scanStatus !== "clean") return apiError(res, 409, "This document is not available until its security scan is complete.");
+    if (new Date(document.retentionUntil).getTime() <= Date.now()) return apiError(res, 410, "This document has reached its retention deadline and is no longer available.");
+    const download = await signedDocumentDownload(document.storageName, document.originalName);
+    await writeAudit(viewer.id, "request_document_download_authorized", "request_document", document.id, { requestId: document.requestId, role: viewer.role, expiresAt: download.expiresAt });
+    res.json(download);
+  } catch (error) { next(error); }
+});
+
+app.post("/api/request-documents/:id/review", requireAuth, requireCsrf, requireRoles("reviewer", "facility_admin", "platform_admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const documentId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    const reviewStatus = text(req.body?.reviewStatus, 20) as "accepted" | "rejected";
+    const reviewNote = text(req.body?.reviewNote, 500);
+    if (!documentId || !["accepted", "rejected"].includes(reviewStatus)) return apiError(res, 400, "Choose whether the verification document is accepted or rejected.");
+    if (reviewStatus === "rejected" && !reviewNote) return apiError(res, 400, "Explain what document information is needed before rejecting it.");
+    const document = await requestDocumentForAccess(documentId);
+    if (!document || document.deletedAt || document.scanStatus !== "clean") return apiError(res, 404, "Document not found.");
+    if (viewer.role !== "platform_admin" && (!canViewFacilityCasework(viewer.role) || viewer.facilityId !== document.facilityId || !(await hasVerifiedFacility(viewer)))) return apiError(res, 404, "Document not found.");
+    if (document.reviewStatus !== "pending") return apiError(res, 409, "This document has already been reviewed.");
+    const reviewedAt = new Date().toISOString();
+    const requestStatus: RequestStatus = reviewStatus === "accepted" ? "submitted" : "needs_information";
+    const requesterMessage = reviewStatus === "accepted"
+      ? "Your verification document was accepted. Your request is now submitted for facility coordination review."
+      : "The facility needs a clearer or updated verification document before it can continue coordination.";
+    await transaction(async (connection) => {
+      await connection.execute(
+        "UPDATE request_documents SET review_status = ?, reviewed_by_user_id = ?, reviewed_at = ?, review_note = ? WHERE id = ?",
+        [reviewStatus, viewer.id, reviewedAt, reviewNote || null, documentId]
+      );
+      await connection.execute(
+        "UPDATE blood_requests SET status = ?, requester_visible_message = ?, updated_at = ? WHERE id = ?",
+        [requestStatus, requesterMessage, reviewedAt, document.requestId]
+      );
+      await connection.execute(
+        "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, 'document_pending_review', ?, ?, ?, ?)",
+        [document.requestId, requestStatus, requesterMessage, viewer.id, reviewedAt]
+      );
+    });
+    await createNotification(document.requesterId, "request", `Verification document ${reviewStatus}`, requesterMessage);
+    await writeAudit(viewer.id, "request_document_reviewed", "request_document", documentId, { requestId: document.requestId, reviewStatus });
+    res.json({ request: await requestDto((await requestRow(document.requestId))!, true) });
   } catch (error) { next(error); }
 });
 
@@ -657,6 +816,7 @@ app.post("/api/requests/:id/status", requireAuth, requireCsrf, requireRoles("rev
     const row = await requestRow(requestId);
     if (!row || !mayAccessRequest(viewer, row)) return apiError(res, 404, "Request not found.");
     if (viewer.role !== "platform_admin" && !(await hasVerifiedFacility(viewer))) return apiError(res, 403, "Your facility must be verified before it can update requests.");
+    if (row.status === "document_pending_review") return apiError(res, 409, "Review the required verification document before changing this request status.");
     if (!canTransition(row.status, targetStatus)) return apiError(res, 409, `Cannot move this request from ${REQUEST_STATUS_LABELS[row.status]} to ${REQUEST_STATUS_LABELS[targetStatus]}.`);
     if (["rejected", "cancelled", "unable_to_fulfill"].includes(targetStatus) && !note) return apiError(res, 400, "A requester-safe explanation is required for this outcome.");
     const message = note || statusMessage(targetStatus);
@@ -917,7 +1077,7 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
     const privateCaseworkAvailable = canViewFacilityCasework(viewer.role);
     const staleThreshold = new Date(Date.now() - STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
-    const [facility, requestCounts, stale, updates, urgent, pendingReview, donorResponseTotal, donorResponseRows, inventory] = await Promise.all([
+    const [facility, requestCounts, stale, updates, urgent, pendingReview, donorResponseTotal, donorResponseRows, inventory, documentRows] = await Promise.all([
       one<FacilityOperations["facility"]>(
         `SELECT id, name, district, verification_status as verificationStatus, facility_type as facilityType, address,
                 public_contact as publicContact, operating_hours as operatingHours, accepts_requests as acceptsRequests,
@@ -929,7 +1089,7 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
       one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_records WHERE facility_id = ? AND last_updated < ?", [facilityId, staleThreshold]),
       one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_adjustments WHERE editor_user_id = ? AND created_at >= ?", [viewer.id, dayStart.toISOString()]),
       one<{ count: number }>("SELECT COUNT(*) as count FROM blood_requests WHERE facility_id = ? AND urgency IN ('Urgent', 'Critical') AND status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')", [facilityId]),
-      one<{ count: number }>("SELECT COUNT(*) as count FROM blood_requests WHERE facility_id = ? AND status IN ('submitted', 'needs_information', 'under_review')", [facilityId]),
+      one<{ count: number }>("SELECT COUNT(*) as count FROM blood_requests WHERE facility_id = ? AND status IN ('document_pending_review', 'submitted', 'needs_information', 'under_review')", [facilityId]),
       privateCaseworkAvailable
         ? one<{ count: number }>(
           `SELECT COUNT(*) as count
@@ -958,7 +1118,21 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
           [DONOR_SCREENING_VERSION, facilityId]
         )
         : Promise.resolve([]),
-      inventoryForFacility(facilityId)
+      inventoryForFacility(facilityId),
+      privateCaseworkAvailable
+        ? query<FacilityOperations["documents"][number]>(
+          `SELECT d.id, d.request_id as requestId, br.reference as requestReference, br.patient_initials as patientInitials,
+                  br.urgency, d.original_name as originalName, d.mime_type as mimeType, d.byte_size as byteSize,
+                  d.scan_status as scanStatus, d.review_status as reviewStatus, d.created_at as createdAt,
+                  d.reviewed_at as reviewedAt, d.retention_until as retentionUntil
+           FROM request_documents d
+           JOIN blood_requests br ON br.id = d.request_id
+           WHERE br.facility_id = ? AND d.deleted_at IS NULL
+           ORDER BY FIELD(d.review_status, 'pending', 'rejected', 'accepted'), d.created_at DESC
+           LIMIT 100`,
+          [facilityId]
+        )
+        : Promise.resolve([])
     ]);
     const caseRows = privateCaseworkAvailable
       ? await query<FacilityCaseRow>(
@@ -997,7 +1171,8 @@ app.get("/api/facility/operations", requireAuth, requireVerifiedFacility, async 
         privateCaseworkAvailable,
         inventory,
         cases,
-        donorResponses
+        donorResponses,
+        documents: documentRows
       } satisfies FacilityOperations
     });
   } catch (error) { next(error); }
@@ -1095,6 +1270,7 @@ if (existsSync(distDirectory)) {
 }
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof DocumentWorkflowError) return apiError(res, error.status, error.message);
   if (error instanceof multer.MulterError) return apiError(res, 400, "The upload was not accepted. Use one PDF/JPG/PNG file no larger than 5 MB.");
   const message = error instanceof Error ? error.message : "Unexpected error";
   console.error(JSON.stringify({ level: "error", message, timestamp: new Date().toISOString() }));

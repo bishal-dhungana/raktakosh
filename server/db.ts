@@ -357,10 +357,20 @@ const schema = [
     byte_size INT NOT NULL,
     sha256 VARCHAR(128) NOT NULL,
     scan_status VARCHAR(50) NOT NULL,
+    scan_provider VARCHAR(80) NULL,
+    scanned_at VARCHAR(40) NULL,
+    review_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    reviewed_by_user_id BIGINT UNSIGNED NULL,
+    reviewed_at VARCHAR(40) NULL,
+    review_note VARCHAR(500) NULL,
+    retention_until VARCHAR(40) NOT NULL,
+    deleted_at VARCHAR(40) NULL,
     created_at VARCHAR(40) NOT NULL,
     KEY idx_request_documents_request (request_id, created_at),
+    KEY idx_request_documents_review (review_status, created_at),
     CONSTRAINT fk_documents_request FOREIGN KEY (request_id) REFERENCES blood_requests(id) ON DELETE CASCADE,
-    CONSTRAINT fk_documents_uploader FOREIGN KEY (uploader_user_id) REFERENCES users(id)
+    CONSTRAINT fk_documents_uploader FOREIGN KEY (uploader_user_id) REFERENCES users(id),
+    CONSTRAINT fk_documents_reviewer FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id)
   )`,
   `CREATE TABLE IF NOT EXISTS donor_profiles (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -586,42 +596,73 @@ async function applySecurityMigrations(): Promise<void> {
 
   const donorScreeningMigrationId = "2026-07-13-donor-screening-and-derived-age";
   const donorScreeningApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [donorScreeningMigrationId]);
-  if (donorScreeningApplied) return;
-  if (!(await columnExists("donor_profiles", "date_of_birth"))) {
-    await execute("ALTER TABLE donor_profiles ADD COLUMN date_of_birth VARCHAR(10) NULL AFTER district");
+  if (!donorScreeningApplied) {
+    if (!(await columnExists("donor_profiles", "date_of_birth"))) {
+      await execute("ALTER TABLE donor_profiles ADD COLUMN date_of_birth VARCHAR(10) NULL AFTER district");
+    }
+    await execute(
+      `CREATE TABLE IF NOT EXISTS donor_health_screenings (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        donor_user_id BIGINT UNSIGNED NOT NULL,
+        questionnaire_version VARCHAR(40) NOT NULL,
+        eligibility_status VARCHAR(40) NOT NULL,
+        medical_data_consent_at VARCHAR(40) NOT NULL,
+        submitted_at VARCHAR(40) NOT NULL,
+        reviewed_by_user_id BIGINT UNSIGNED NULL,
+        reviewed_at VARCHAR(40) NULL,
+        review_reason VARCHAR(500) NULL,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY uq_donor_screening_version (donor_user_id, questionnaire_version),
+        KEY idx_donor_screening_status (eligibility_status, updated_at),
+        CONSTRAINT fk_screening_donor FOREIGN KEY (donor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_screening_reviewer FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id)
+      )`
+    );
+    await execute(
+      `CREATE TABLE IF NOT EXISTS donor_screening_answers (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        screening_id BIGINT UNSIGNED NOT NULL,
+        question_key VARCHAR(80) NOT NULL,
+        answer VARCHAR(20) NOT NULL,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY uq_screening_question (screening_id, question_key),
+        CONSTRAINT fk_screening_answer_screening FOREIGN KEY (screening_id) REFERENCES donor_health_screenings(id) ON DELETE CASCADE
+      )`
+    );
+    await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [donorScreeningMigrationId, now()]);
   }
-  await execute(
-    `CREATE TABLE IF NOT EXISTS donor_health_screenings (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      donor_user_id BIGINT UNSIGNED NOT NULL,
-      questionnaire_version VARCHAR(40) NOT NULL,
-      eligibility_status VARCHAR(40) NOT NULL,
-      medical_data_consent_at VARCHAR(40) NOT NULL,
-      submitted_at VARCHAR(40) NOT NULL,
-      reviewed_by_user_id BIGINT UNSIGNED NULL,
-      reviewed_at VARCHAR(40) NULL,
-      review_reason VARCHAR(500) NULL,
-      created_at VARCHAR(40) NOT NULL,
-      updated_at VARCHAR(40) NOT NULL,
-      UNIQUE KEY uq_donor_screening_version (donor_user_id, questionnaire_version),
-      KEY idx_donor_screening_status (eligibility_status, updated_at),
-      CONSTRAINT fk_screening_donor FOREIGN KEY (donor_user_id) REFERENCES users(id) ON DELETE CASCADE,
-      CONSTRAINT fk_screening_reviewer FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id)
-    )`
-  );
-  await execute(
-    `CREATE TABLE IF NOT EXISTS donor_screening_answers (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      screening_id BIGINT UNSIGNED NOT NULL,
-      question_key VARCHAR(80) NOT NULL,
-      answer VARCHAR(20) NOT NULL,
-      created_at VARCHAR(40) NOT NULL,
-      updated_at VARCHAR(40) NOT NULL,
-      UNIQUE KEY uq_screening_question (screening_id, question_key),
-      CONSTRAINT fk_screening_answer_screening FOREIGN KEY (screening_id) REFERENCES donor_health_screenings(id) ON DELETE CASCADE
-    )`
-  );
-  await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [donorScreeningMigrationId, now()]);
+
+  const documentMigrationId = "2026-07-13-private-request-document-workflow";
+  const documentMigrationApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [documentMigrationId]);
+  if (!documentMigrationApplied) {
+    if (!(await columnExists("request_documents", "scan_provider"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN scan_provider VARCHAR(80) NULL AFTER scan_status");
+    }
+    if (!(await columnExists("request_documents", "scanned_at"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN scanned_at VARCHAR(40) NULL AFTER scan_provider");
+    }
+    if (!(await columnExists("request_documents", "review_status"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN review_status VARCHAR(50) NOT NULL DEFAULT 'pending' AFTER scanned_at");
+    }
+    if (!(await columnExists("request_documents", "reviewed_by_user_id"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN reviewed_by_user_id BIGINT UNSIGNED NULL AFTER review_status");
+    }
+    if (!(await columnExists("request_documents", "reviewed_at"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN reviewed_at VARCHAR(40) NULL AFTER reviewed_by_user_id");
+    }
+    if (!(await columnExists("request_documents", "review_note"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN review_note VARCHAR(500) NULL AFTER reviewed_at");
+    }
+    if (!(await columnExists("request_documents", "retention_until"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN retention_until VARCHAR(40) NOT NULL DEFAULT '2027-07-13T00:00:00.000Z' AFTER review_note");
+    }
+    if (!(await columnExists("request_documents", "deleted_at"))) {
+      await execute("ALTER TABLE request_documents ADD COLUMN deleted_at VARCHAR(40) NULL AFTER retention_until");
+    }
+    await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [documentMigrationId, now()]);
+  }
 }
 
 export function hashDocument(buffer: Buffer): string {

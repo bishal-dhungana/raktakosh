@@ -2,6 +2,7 @@ import type { RequestStatus } from "../src/types";
 
 export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
   draft: "Draft",
+  document_pending_review: "Document pending review",
   submitted: "Submitted",
   needs_information: "Needs information",
   under_review: "Under review",
@@ -21,6 +22,7 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
 
 const transitions: Record<RequestStatus, RequestStatus[]> = {
   draft: ["submitted", "cancelled"],
+  document_pending_review: ["submitted", "needs_information", "rejected", "cancelled", "expired"],
   submitted: ["needs_information", "under_review", "rejected", "cancelled", "expired"],
   needs_information: ["submitted", "under_review", "rejected", "cancelled", "expired"],
   under_review: ["needs_information", "verified", "rejected", "cancelled", "expired"],

@@ -10,6 +10,7 @@ export type UserRole =
 
 export type RequestStatus =
   | "draft"
+  | "document_pending_review"
   | "submitted"
   | "needs_information"
   | "under_review"
@@ -80,7 +81,16 @@ export interface BloodRequest {
   createdAt: string;
   updatedAt: string;
   events: RequestEvent[];
-  documents?: Array<{ id: number; originalName: string; scanStatus: string; createdAt: string }>;
+  documents?: Array<{
+    id: number;
+    originalName: string;
+    mimeType: string;
+    byteSize: number;
+    scanStatus: "clean" | "malicious" | "scan_error" | "pending";
+    reviewStatus: "pending" | "accepted" | "rejected";
+    createdAt: string;
+    reviewedAt: string | null;
+  }>;
   internalNotes?: Array<{ id: number; body: string; authorName: string; createdAt: string }>;
 }
 
@@ -181,6 +191,23 @@ export interface FacilityOperations extends FacilityDashboard {
   inventory: InventoryItem[];
   cases: FacilityCase[];
   donorResponses: FacilityDonorResponse[];
+  documents: FacilityRequestDocument[];
+}
+
+export interface FacilityRequestDocument {
+  id: number;
+  requestId: number;
+  requestReference: string;
+  patientInitials: string;
+  urgency: string;
+  originalName: string;
+  mimeType: string;
+  byteSize: number;
+  scanStatus: "clean" | "malicious" | "scan_error" | "pending";
+  reviewStatus: "pending" | "accepted" | "rejected";
+  createdAt: string;
+  reviewedAt: string | null;
+  retentionUntil: string;
 }
 
 export interface AdminOverview {

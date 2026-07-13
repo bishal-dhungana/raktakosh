@@ -4,6 +4,7 @@ import { availabilityState, canTransition, isStale } from "./domain";
 import { canViewFacilityCasework } from "./facility-access";
 import { deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, preliminaryEligibilityStatus } from "../src/donor-screening";
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
+import { detectDocumentMime, safeDocumentName, validateDocument } from "./document-storage";
 
 test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(NEPAL_DISTRICTS.length, 77);
@@ -43,9 +44,20 @@ test("keeps pre-screening conservative", () => {
 });
 
 test("allows only safe request transitions", () => {
+  assert.equal(canTransition("document_pending_review", "submitted"), true);
+  assert.equal(canTransition("document_pending_review", "under_review"), false);
   assert.equal(canTransition("submitted", "under_review"), true);
   assert.equal(canTransition("submitted", "donor_outreach_active"), false);
   assert.equal(canTransition("fulfilled", "under_review"), false);
+});
+
+test("accepts only genuine PDF/JPEG/PNG verification documents", () => {
+  const pdf = Buffer.from("%PDF-1.7\nprivate verification document");
+  assert.equal(detectDocumentMime(pdf), "application/pdf");
+  assert.equal(validateDocument(pdf, "application/pdf"), "application/pdf");
+  assert.throws(() => validateDocument(pdf, "image/png"));
+  assert.throws(() => validateDocument(Buffer.from("not a document"), "application/pdf"));
+  assert.equal(safeDocumentName("../Hospital slip?.PDF", "application/pdf"), ".._Hospital slip_.pdf");
 });
 
 test("does not present stale availability as current", () => {

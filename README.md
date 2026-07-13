@@ -22,7 +22,7 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 
 - Public search of verified facility-reported inventory by district, blood group, Rh factor, and blood component.
 - A canonical directory of all **77 Nepal districts** for search, donor profiles, and private requests.
-- Private blood-request creation, status tracking, event timelines, and facility review workflows.
+- Private blood-request creation with a mandatory malware-scanned verification document, status tracking, event timelines, and facility review workflows.
 - Donor registration, consent controls, availability preferences, and privacy-minimised outreach invitations.
 - Facility inventory updates with adjustment history, public-visibility controls, and stale-record indicators.
 - Role-aware workspaces for requesters, donors, inventory managers, reviewers, facility administrators, and platform administrators.
@@ -210,7 +210,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 - Authentication is rate-limited; sessions and temporary authentication challenges are stored as hashes.
 - Staff use TOTP multi-factor authentication, with encrypted secrets at rest.
 - Inventory changes, request workflow events, staff changes, and public searches create audit records.
-- Production document uploads are intentionally disabled until private object storage, malware scanning, signed downloads, retention rules, and access logging are configured.
+- Verification documents are enabled only when private R2 storage and the private ClamAV scanner are fully configured. The workflow fails closed: unscanned or malicious documents never create a request or enter object storage.
 - Do not use the platform as an emergency response service or a substitute for direct clinical communication with a blood-service facility.
 
 ## Documentation
@@ -225,6 +225,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 | [District coverage](docs/DISTRICT-COVERAGE.md) | Nepal-wide district directory and data-coverage behavior. |
 | [Blood-centre operations](docs/FACILITY-OPERATIONS.md) | Facility dashboard roles, private-data boundaries, and API behavior. |
 | [Donor pre-screening](docs/DONOR-PRE-SCREENING.md) | DOB, derived age, consented questionnaire, reviewer access, and deployment migration. |
+| [Verification documents](docs/REQUEST-DOCUMENTS.md) | Mandatory request document, private R2 storage, scanning, review, and retention workflow. |
 | [Testing report](docs/TESTING-REPORT.md) | Automated checks and deployment smoke tests. |
 | [Viva guide](docs/VIVA-GUIDE.md) | Suggested project demonstration flow. |
 | [Product requirements document](docs/Raktakosh-PRD-and-MVP.md) | Product scope, workflows, requirements, and roadmap. |

@@ -20,7 +20,21 @@ services:
       - key: MFA_ENCRYPTION_KEY
         sync: false
       - key: DOCUMENT_STORAGE_MODE
-        value: disabled
+        value: r2
+      - key: R2_BUCKET
+        value: raktakosh
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: DOCUMENT_SCANNER_URL
+        sync: false
+      - key: SCANNER_SHARED_SECRET
+        sync: false
+      - key: DOCUMENT_RETENTION_DAYS
+        value: "365"
       - key: AUTO_MIGRATE
         value: "false"
       - key: BOOTSTRAP_ADMIN_EMAIL
@@ -34,4 +48,14 @@ services:
       - key: BOOTSTRAP_INVENTORY_EMAIL
         sync: false
       - key: BOOTSTRAP_INVENTORY_PASSWORD
+        sync: false
+  - type: pserv
+    name: raktakosh-document-scanner
+    runtime: docker
+    plan: starter
+    rootDir: scanner
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: SCANNER_SHARED_SECRET
         sync: false
