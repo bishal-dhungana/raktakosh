@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: raktakosh-api
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: TIDB_CA_CERT
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_REVIEWER_EMAIL
+        sync: false
+      - key: BOOTSTRAP_REVIEWER_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_INVENTORY_EMAIL
+        sync: false
+      - key: BOOTSTRAP_INVENTORY_PASSWORD
+        sync: false

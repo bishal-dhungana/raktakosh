@@ -11,18 +11,23 @@
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
     "serve": "npm run build && npm run start",
-    "reset-data": "node scripts/reset-showcase-data.mjs",
     "test": "tsx --test server/**/*.test.ts"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.3.0",
     "multer": "^2.0.2",
+    "mysql2": "^3.22.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.9",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.3.0",

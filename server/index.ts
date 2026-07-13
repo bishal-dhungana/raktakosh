@@ -1,9 +1,14 @@
+import "dotenv/config";
 import { randomUUID } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import cookieParser from "cookie-parser";
+import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 import multer from "multer";
+import type { PoolConnection, ResultSetHeader } from "mysql2/promise";
 import type {
   AdminOverview,
   BloodRequest,
@@ -21,30 +26,33 @@ import {
   STALE_AFTER_HOURS,
   createNotification,
   createSession,
-  db,
   deleteSession,
+  execute,
   getCurrentUser,
+  getPool,
   getUserByEmail,
   hashDocument,
-  uploadsDirectory,
+  hashPassword,
+  initializeDatabase,
+  one,
+  query,
+  transaction,
   verifyPassword,
   writeAudit
 } from "./db";
-import { REQUEST_STATUS_LABELS, allowedTransitions, availabilityState, canTransition, makeRequestReference } from "./domain";
+import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8787);
+const isProduction = process.env.NODE_ENV === "production";
+const frontendOrigin = process.env.FRONTEND_ORIGIN?.replace(/\/$/, "");
 const validGroups = new Set(["A", "B", "AB", "O"]);
 const validRh = new Set(["+", "-"]);
 const validComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma"]);
 const facilityRoles = new Set<UserRole>(["inventory_manager", "reviewer", "facility_admin"]);
-const accessProfiles: Array<{ key: string; label: string; description: string; role: UserRole }> = [
-  { key: "requester", label: "Requester workspace", description: "Create and track a private blood coordination request.", role: "requester" },
-  { key: "donor", label: "Donor workspace", description: "Manage availability, consent, and outreach responses.", role: "donor" },
-  { key: "inventory", label: "Inventory workspace", description: "Maintain facility availability with adjustment history.", role: "inventory_manager" },
-  { key: "reviewer", label: "Review workspace", description: "Review requests and coordinate the next verified step.", role: "reviewer" },
-  { key: "administrator", label: "Administrator workspace", description: "Review facility governance, policies, and audit activity.", role: "platform_admin" }
-];
+const localOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
+const uploadsDirectory = join(process.cwd(), "storage", "uploads");
+mkdirSync(uploadsDirectory, { recursive: true });
 
 interface AuthRequest extends Request {
   viewer?: CurrentUser;
@@ -71,19 +79,9 @@ interface RequestRow {
   facility_name: string;
 }
 
-type RateEntry = { count: number; expiresAt: number };
-const rateEntries = new Map<string, RateEntry>();
-
-app.set("trust proxy", 1);
-app.use(express.json({ limit: "1mb" }));
-app.use(cookieParser());
-app.use((req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "same-origin");
-  res.setHeader("Cache-Control", req.path.startsWith("/api") ? "no-store" : "public, max-age=300");
-  next();
-});
+type InventoryRow = Omit<InventoryItem, "publicVisible"> & { publicVisible: number };
+type DonorProfileRow = Omit<DonorProfile, "outreachConsent"> & { outreachConsent: number };
+type AdminFacilityRow = Omit<AdminOverview["facilities"][number], "publicAvailability"> & { publicAvailability: number };
 
 function apiError(res: Response, status: number, error: string): void {
   res.status(status).json({ error });
@@ -102,61 +100,39 @@ function clientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-function rateLimit(limit: number, windowMs: number) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const key = `${clientIp(req)}:${req.path}`;
-    const now = Date.now();
-    const existing = rateEntries.get(key);
-    if (!existing || existing.expiresAt <= now) {
-      rateEntries.set(key, { count: 1, expiresAt: now + windowMs });
-      return next();
-    }
-    existing.count += 1;
-    if (existing.count > limit) return apiError(res, 429, "Too many requests. Please wait and try again.");
-    next();
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: (isProduction ? "none" : "lax") as "none" | "lax",
+    secure: isProduction,
+    maxAge: SESSION_HOURS * 60 * 60 * 1000,
+    path: "/"
   };
+}
+
+function allowedOrigins(): Set<string> {
+  const origins = new Set(localOrigins);
+  if (frontendOrigin) origins.add(frontendOrigin);
+  return origins;
 }
 
 function getToken(req: Request): string | undefined {
   return typeof req.cookies?.rk_session === "string" ? req.cookies.rk_session : undefined;
 }
 
-function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
-  const viewer = getCurrentUser(getToken(req));
-  if (!viewer) return apiError(res, 401, "Please sign in to continue.");
-  req.viewer = viewer;
-  next();
-}
-
-function requireRoles(...roles: UserRole[]) {
-  return (req: AuthRequest, res: Response, next: NextFunction): void => {
-    if (!req.viewer || !roles.includes(req.viewer.role)) return apiError(res, 403, "You do not have access to this action.");
-    next();
-  };
-}
-
-function hasVerifiedFacility(viewer: CurrentUser): boolean {
+async function hasVerifiedFacility(viewer: CurrentUser): Promise<boolean> {
   if (!viewer.facilityId) return false;
-  const facility = db.prepare("SELECT verification_status FROM facilities WHERE id = ?").get(viewer.facilityId) as { verification_status?: string } | undefined;
+  const facility = await one<{ verification_status: string }>("SELECT verification_status FROM facilities WHERE id = ? LIMIT 1", [viewer.facilityId]);
   return facility?.verification_status === "verified";
 }
 
-function requireVerifiedFacility(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (!req.viewer || !facilityRoles.has(req.viewer.role) || !hasVerifiedFacility(req.viewer)) {
-    return apiError(res, 403, "Only staff of a verified facility may perform this action.");
-  }
-  next();
-}
-
-function requestRow(requestId: number): RequestRow | undefined {
-  return db
-    .prepare(
-      `SELECT br.*, f.name as facility_name
-       FROM blood_requests br
-       JOIN facilities f ON f.id = br.facility_id
-       WHERE br.id = ?`
-    )
-    .get(requestId) as RequestRow | undefined;
+async function requestRow(requestId: number): Promise<RequestRow | undefined> {
+  return one<RequestRow>(
+    `SELECT br.*, f.name as facility_name
+     FROM blood_requests br JOIN facilities f ON f.id = br.facility_id
+     WHERE br.id = ? LIMIT 1`,
+    [requestId]
+  );
 }
 
 function mayAccessRequest(viewer: CurrentUser, row: RequestRow): boolean {
@@ -165,35 +141,33 @@ function mayAccessRequest(viewer: CurrentUser, row: RequestRow): boolean {
   return facilityRoles.has(viewer.role) && viewer.facilityId === row.facility_id;
 }
 
-function requestEvents(requestId: number) {
-  return db
-    .prepare(
-      `SELECT e.id, e.from_status as fromStatus, e.to_status as toStatus, e.message, COALESCE(u.name, 'System') as actorName, e.created_at as createdAt
-       FROM request_events e LEFT JOIN users u ON u.id = e.actor_user_id
-       WHERE e.request_id = ? ORDER BY e.created_at ASC, e.id ASC`
-    )
-    .all(requestId);
+async function requestEvents(requestId: number): Promise<BloodRequest["events"]> {
+  return query<BloodRequest["events"][number]>(
+    `SELECT e.id, e.from_status as fromStatus, e.to_status as toStatus, e.message,
+            COALESCE(u.name, 'System') as actorName, e.created_at as createdAt
+     FROM request_events e LEFT JOIN users u ON u.id = e.actor_user_id
+     WHERE e.request_id = ? ORDER BY e.created_at ASC, e.id ASC`,
+    [requestId]
+  );
 }
 
-function requestDocuments(requestId: number) {
-  return db
-    .prepare(
-      "SELECT id, original_name as originalName, scan_status as scanStatus, created_at as createdAt FROM request_documents WHERE request_id = ? ORDER BY created_at DESC"
-    )
-    .all(requestId);
+async function requestDocuments(requestId: number): Promise<NonNullable<BloodRequest["documents"]>> {
+  return query<NonNullable<BloodRequest["documents"]>[number]>(
+    "SELECT id, original_name as originalName, scan_status as scanStatus, created_at as createdAt FROM request_documents WHERE request_id = ? ORDER BY created_at DESC",
+    [requestId]
+  );
 }
 
-function requestNotes(requestId: number) {
-  return db
-    .prepare(
-      `SELECT n.id, n.body, u.name as authorName, n.created_at as createdAt
-       FROM request_notes n JOIN users u ON u.id = n.author_user_id
-       WHERE n.request_id = ? ORDER BY n.created_at DESC`
-    )
-    .all(requestId);
+async function requestNotes(requestId: number): Promise<NonNullable<BloodRequest["internalNotes"]>> {
+  return query<NonNullable<BloodRequest["internalNotes"]>[number]>(
+    `SELECT n.id, n.body, u.name as authorName, n.created_at as createdAt
+     FROM request_notes n JOIN users u ON u.id = n.author_user_id
+     WHERE n.request_id = ? ORDER BY n.created_at DESC`,
+    [requestId]
+  );
 }
 
-function requestDto(row: RequestRow, includeInternal = false): BloodRequest {
+async function requestDto(row: RequestRow, includeInternal = false): Promise<BloodRequest> {
   const dto: BloodRequest = {
     id: row.id,
     reference: row.reference,
@@ -212,27 +186,23 @@ function requestDto(row: RequestRow, includeInternal = false): BloodRequest {
     requesterVisibleMessage: row.requester_visible_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    events: requestEvents(row.id) as unknown as BloodRequest["events"],
-    documents: requestDocuments(row.id) as unknown as NonNullable<BloodRequest["documents"]>
+    events: await requestEvents(row.id),
+    documents: await requestDocuments(row.id)
   };
-  if (includeInternal) dto.internalNotes = requestNotes(row.id) as unknown as NonNullable<BloodRequest["internalNotes"]>;
+  if (includeInternal) dto.internalNotes = await requestNotes(row.id);
   return dto;
 }
 
-function addRequestEvent(requestId: number, fromStatus: RequestStatus | null, toStatus: RequestStatus, message: string, actorId: number | null): void {
-  db.prepare("INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
-    requestId,
-    fromStatus,
-    toStatus,
-    message,
-    actorId,
-    new Date().toISOString()
+async function addRequestEvent(requestId: number, fromStatus: RequestStatus | null, toStatus: RequestStatus, message: string, actorId: number | null): Promise<void> {
+  await execute(
+    "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    [requestId, fromStatus, toStatus, message, actorId, new Date().toISOString()]
   );
 }
 
-function notifyReviewers(facilityId: number, title: string, body: string): void {
-  const staff = db.prepare("SELECT id FROM users WHERE facility_id = ? AND role IN ('reviewer', 'facility_admin')").all(facilityId) as Array<{ id: number }>;
-  staff.forEach((staffMember) => createNotification(staffMember.id, "request", title, body));
+async function notifyReviewers(facilityId: number, title: string, body: string): Promise<void> {
+  const staff = await query<{ id: number }>("SELECT id FROM users WHERE facility_id = ? AND role IN ('reviewer', 'facility_admin')", [facilityId]);
+  await Promise.all(staff.map((member) => createNotification(member.id, "request", title, body)));
 }
 
 function statusMessage(status: RequestStatus): string {
@@ -256,453 +226,496 @@ function statusMessage(status: RequestStatus): string {
   return messages[status] ?? "Request status updated.";
 }
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", mode: "ready", timestamp: new Date().toISOString() });
-});
-
-app.get("/api/access-profiles", (_req, res) => {
-  res.json({ profiles: accessProfiles.map(({ key, label, description }) => ({ key, label, description })) });
-});
-
-app.post("/api/auth/access-profile", rateLimit(12, 15 * 60 * 1000), (req, res) => {
-  const key = text(req.body?.key, 32);
-  const profile = accessProfiles.find((candidate) => candidate.key === key);
-  if (!profile) return apiError(res, 400, "Choose a valid workspace.");
-  const user = db.prepare("SELECT id FROM users WHERE role = ? ORDER BY id LIMIT 1").get(profile.role) as { id: number } | undefined;
-  if (!user) return apiError(res, 503, "This workspace is temporarily unavailable.");
-  const token = createSession(user.id);
-  const viewer = getCurrentUser(token);
-  writeAudit(user.id, "workspace_accessed", "account", user.id, { profile: profile.key, source: clientIp(req) });
-  res.cookie("rk_session", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_HOURS * 60 * 60 * 1000,
-    path: "/"
-  });
-  res.json({ user: viewer });
-});
-
-app.post("/api/auth/login", rateLimit(8, 15 * 60 * 1000), (req, res) => {
-  const email = text(req.body?.email, 120).toLowerCase();
-  const password = text(req.body?.password, 200);
-  if (!email || !password) return apiError(res, 400, "Email and password are required.");
-  const user = getUserByEmail(email);
-  if (!user || !verifyPassword(password, user.passwordHash)) {
-    writeAudit(null, "login_denied", "account", email, { source: clientIp(req) });
-    return apiError(res, 401, "The email or password is not correct.");
+async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const viewer = await getCurrentUser(getToken(req));
+    if (!viewer) return apiError(res, 401, "Please sign in to continue.");
+    req.viewer = viewer;
+    next();
+  } catch (error) {
+    next(error);
   }
-  const token = createSession(user.id);
-  const viewer = getCurrentUser(token);
-  writeAudit(user.id, "login_succeeded", "account", user.id, { source: clientIp(req) });
-  res.cookie("rk_session", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_HOURS * 60 * 60 * 1000,
-    path: "/"
-  });
-  res.json({ user: viewer });
+}
+
+function requireRoles(...roles: UserRole[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction): void => {
+    if (!req.viewer || !roles.includes(req.viewer.role)) return apiError(res, 403, "You do not have access to this action.");
+    next();
+  };
+}
+
+async function requireVerifiedFacility(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.viewer || !facilityRoles.has(req.viewer.role) || !(await hasVerifiedFacility(req.viewer))) {
+      return apiError(res, 403, "Only staff of a verified facility may perform this action.");
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function trustedOriginGuard(req: Request, res: Response, next: NextFunction): void {
+  if (!isProduction || ["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  if (!frontendOrigin || req.headers.origin !== frontendOrigin) return apiError(res, 403, "This request origin is not authorized.");
+  next();
+}
+
+app.set("trust proxy", 1);
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins().has(origin)) return callback(null, true);
+    callback(new Error("Origin is not permitted."));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
+}));
+app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+app.use(trustedOriginGuard);
+app.use("/api", rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: "draft-8", legacyHeaders: false }));
+
+const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many attempts. Please wait and try again." } });
+const writeRateLimit = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many submissions. Please wait and try again." } });
+
+app.get("/api/health", async (_req, res, next) => {
+  try {
+    await query<{ ok: number }>("SELECT 1 as ok");
+    res.json({ status: "ok", database: "connected", timestamp: new Date().toISOString() });
+  } catch (error) { next(error); }
 });
 
-app.post("/api/auth/logout", (req, res) => {
-  const token = getToken(req);
-  if (token) deleteSession(token);
-  res.clearCookie("rk_session", { path: "/" });
-  res.status(204).end();
+app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
+  try {
+    const name = text(req.body?.name, 160);
+    const email = text(req.body?.email, 190).toLowerCase();
+    const phone = text(req.body?.phone, 40);
+    const password = text(req.body?.password, 200);
+    const role = text(req.body?.role, 30) as "requester" | "donor";
+    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || password.length < 10 || !["requester", "donor"].includes(role)) {
+      return apiError(res, 400, "Enter a valid name, email, phone, account type, and password of at least 10 characters.");
+    }
+    const existing = await getUserByEmail(email);
+    if (existing) return apiError(res, 409, "An account already exists for this email address.");
+    const createdAt = new Date().toISOString();
+    const userId = await transaction(async (connection) => {
+      const [userResult] = await connection.execute<ResultSetHeader>(
+        "INSERT INTO users (name, email, phone, role, facility_id, password_hash, verified_at, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)",
+        [name, email, phone, role, hashPassword(password), createdAt, createdAt]
+      );
+      const insertedId = Number(userResult.insertId);
+      if (role === "donor") {
+        const bloodGroup = text(req.body?.bloodGroup, 4);
+        const rhFactor = text(req.body?.rhFactor, 2);
+        const district = text(req.body?.district, 80) || "Morang";
+        if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor)) throw new Error("Donor registration requires a valid self-reported blood group and Rh factor.");
+        await connection.execute(
+          `INSERT INTO donor_profiles (user_id, self_reported_group, self_reported_rh, district, availability, outreach_consent, contact_window, max_contacts_per_month, pre_screening_result, policy_version, last_donation_date, last_contact_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'available', ?, '08:00–20:00 NPT', 2, ?, 'Donor pre-screen v1.0', NULL, NULL, ?, ?)`,
+          [insertedId, bloodGroup, rhFactor, district, req.body?.outreachConsent ? 1 : 0, "Pre-screening is guidance only; final eligibility is determined by the facility.", createdAt, createdAt]
+        );
+      }
+      return insertedId;
+    });
+    const token = await createSession(userId);
+    const user = await getCurrentUser(token);
+    await writeAudit(userId, "account_registered", "user", userId, { role, source: clientIp(req) });
+    res.cookie("rk_session", token, cookieOptions());
+    res.status(201).json({ user });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/auth/me", requireAuth, (req: AuthRequest, res) => {
-  res.json({ user: req.viewer });
+app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
+  try {
+    const email = text(req.body?.email, 190).toLowerCase();
+    const password = text(req.body?.password, 200);
+    if (!email || !password) return apiError(res, 400, "Email and password are required.");
+    const user = await getUserByEmail(email);
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      await writeAudit(null, "login_denied", "account", email, { source: clientIp(req) });
+      return apiError(res, 401, "The email or password is not correct.");
+    }
+    const token = await createSession(user.id);
+    const viewer = await getCurrentUser(token);
+    await writeAudit(user.id, "login_succeeded", "account", user.id, { source: clientIp(req) });
+    res.cookie("rk_session", token, cookieOptions());
+    res.json({ user: viewer });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/policies", (_req, res) => {
-  const policies = db.prepare("SELECT id, name, version, effective_at as effectiveAt, summary FROM policy_versions ORDER BY effective_at DESC").all();
-  res.json({ policies });
+app.post("/api/auth/logout", async (req, res, next) => {
+  try {
+    const token = getToken(req);
+    if (token) await deleteSession(token);
+    res.clearCookie("rk_session", cookieOptions());
+    res.status(204).end();
+  } catch (error) { next(error); }
 });
 
-app.get("/api/public/availability", rateLimit(60, 10 * 60 * 1000), (req, res) => {
-  const district = text(req.query.district, 60);
-  const bloodGroup = text(req.query.bloodGroup, 4);
-  const rhFactor = text(req.query.rhFactor, 2);
-  const component = text(req.query.component, 30);
-  const filters: string[] = ["f.verification_status = 'verified'", "f.public_availability = 1", "i.public_visible = 1"];
-  const values: string[] = [];
-  if (district && district !== "All districts") {
-    filters.push("f.district = ?");
-    values.push(district);
-  }
-  if (bloodGroup && validGroups.has(bloodGroup)) {
-    filters.push("i.blood_group = ?");
-    values.push(bloodGroup);
-  }
-  if (rhFactor && validRh.has(rhFactor)) {
-    filters.push("i.rh_factor = ?");
-    values.push(rhFactor);
-  }
-  if (component && validComponents.has(component)) {
-    filters.push("i.component = ?");
-    values.push(component);
-  }
-  const rows = db
-    .prepare(
+app.get("/api/auth/me", requireAuth, (req: AuthRequest, res) => res.json({ user: req.viewer }));
+
+app.get("/api/policies", async (_req, res, next) => {
+  try {
+    res.json({ policies: await query("SELECT id, name, version, effective_at as effectiveAt, summary FROM policy_versions ORDER BY effective_at DESC") });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/public/availability", async (req, res, next) => {
+  try {
+    const district = text(req.query.district, 80);
+    const bloodGroup = text(req.query.bloodGroup, 4);
+    const rhFactor = text(req.query.rhFactor, 2);
+    const component = text(req.query.component, 80);
+    const filters = ["f.verification_status = 'verified'", "f.public_availability = 1", "i.public_visible = 1"];
+    const values: unknown[] = [];
+    if (district && district !== "All districts") { filters.push("f.district = ?"); values.push(district); }
+    if (bloodGroup && validGroups.has(bloodGroup)) { filters.push("i.blood_group = ?"); values.push(bloodGroup); }
+    if (rhFactor && validRh.has(rhFactor)) { filters.push("i.rh_factor = ?"); values.push(rhFactor); }
+    if (component && validComponents.has(component)) { filters.push("i.component = ?"); values.push(component); }
+    const rows = await query<Omit<PublicAvailability, "state"> & { availableQuantity: number }>(
       `SELECT f.id as facilityId, f.name as facilityName, f.facility_type as facilityType, f.district, f.public_contact as contact, f.operating_hours as operatingHours,
               i.blood_group as bloodGroup, i.rh_factor as rhFactor, i.component, i.available_quantity as availableQuantity, i.last_updated as lastUpdated
        FROM inventory_records i JOIN facilities f ON f.id = i.facility_id
-       WHERE ${filters.join(" AND ")} ORDER BY f.name, i.component`
-    )
-    .all(...values) as Array<Omit<PublicAvailability, "state"> & { availableQuantity: number }>;
-  const results: PublicAvailability[] = rows.map((row) => ({
-    facilityId: row.facilityId,
-    facilityName: row.facilityName,
-    facilityType: row.facilityType,
-    district: row.district,
-    contact: row.contact,
-    operatingHours: row.operatingHours,
-    bloodGroup: row.bloodGroup,
-    rhFactor: row.rhFactor,
-    component: row.component,
-    state: availabilityState(row.availableQuantity, row.lastUpdated, STALE_AFTER_HOURS),
-    lastUpdated: row.lastUpdated
-  }));
-  writeAudit(null, "public_search", "availability", "district-filter", { district: district || "all", count: results.length });
-  res.json({ results, staleAfterHours: STALE_AFTER_HOURS });
-});
-
-app.get("/api/public/facilities", (_req, res) => {
-  const facilities = db
-    .prepare("SELECT id, name, district, facility_type as facilityType, public_contact as contact, operating_hours as operatingHours FROM facilities WHERE verification_status = 'verified' AND accepts_requests = 1 ORDER BY name")
-    .all();
-  res.json({ facilities });
-});
-
-app.get("/api/requests", requireAuth, (req: AuthRequest, res) => {
-  const viewer = req.viewer!;
-  let rows: RequestRow[] = [];
-  if (viewer.role === "platform_admin") {
-    rows = db.prepare(`SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id ORDER BY br.updated_at DESC`).all() as unknown as RequestRow[];
-  } else if (facilityRoles.has(viewer.role) && viewer.facilityId) {
-    rows = db.prepare(`SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id WHERE br.facility_id = ? ORDER BY br.updated_at DESC`).all(viewer.facilityId) as unknown as RequestRow[];
-  } else {
-    rows = db.prepare(`SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id WHERE br.requester_id = ? ORDER BY br.updated_at DESC`).all(viewer.id) as unknown as RequestRow[];
-  }
-  const includeInternal = facilityRoles.has(viewer.role) || viewer.role === "platform_admin";
-  res.json({ requests: rows.map((row) => requestDto(row, includeInternal)) });
-});
-
-app.post("/api/requests", requireAuth, requireRoles("requester", "donor"), rateLimit(8, 60 * 60 * 1000), (req: AuthRequest, res) => {
-  const viewer = req.viewer!;
-  const facilityId = positiveInteger(req.body?.facilityId);
-  const quantity = positiveInteger(req.body?.quantity);
-  const patientInitials = text(req.body?.patientInitials, 32);
-  const relationship = text(req.body?.relationship, 60);
-  const bloodGroup = text(req.body?.bloodGroup, 4);
-  const rhFactor = text(req.body?.rhFactor, 2);
-  const component = text(req.body?.component, 32);
-  const urgency = text(req.body?.urgency, 32);
-  const district = text(req.body?.district, 60);
-  const neededBy = text(req.body?.neededBy, 40);
-  const clientToken = text(req.body?.clientToken, 80);
-  if (!facilityId || !quantity || !patientInitials || !relationship || !validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !urgency || !district || !neededBy) {
-    return apiError(res, 400, "Complete all required request fields with a supported blood group and component.");
-  }
-  const requiredBy = new Date(neededBy);
-  if (Number.isNaN(requiredBy.getTime()) || requiredBy.getTime() <= Date.now()) return apiError(res, 400, "Choose a future needed-by date and time.");
-  const facility = db.prepare("SELECT id FROM facilities WHERE id = ? AND verification_status = 'verified' AND accepts_requests = 1").get(facilityId) as { id: number } | undefined;
-  if (!facility) return apiError(res, 400, "Choose a verified facility that is accepting requests.");
-  if (clientToken) {
-    const duplicate = db.prepare("SELECT id FROM blood_requests WHERE requester_id = ? AND client_token = ?").get(viewer.id, clientToken) as { id: number } | undefined;
-    if (duplicate) {
-      const existing = requestRow(duplicate.id);
-      if (existing) return res.json({ request: requestDto(existing), duplicate: true });
-    }
-  }
-  const createdAt = new Date().toISOString();
-  const result = db
-    .prepare(
-      `INSERT INTO blood_requests (reference, requester_id, facility_id, client_token, patient_initials, requester_relationship, blood_group, rh_factor, component, quantity, urgency, district, needed_by, status, requester_visible_message, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?)`
-    )
-    .run(
-      makeRequestReference(),
-      viewer.id,
-      facilityId,
-      clientToken || null,
-      patientInitials,
-      relationship,
-      bloodGroup,
-      rhFactor,
-      component,
-      quantity,
-      urgency,
-      district,
-      requiredBy.toISOString(),
-      "Your request has been submitted for facility review. It is not a reservation or medical confirmation.",
-      createdAt,
-      createdAt
+       WHERE ${filters.join(" AND ")} ORDER BY f.name, i.component`,
+      values
     );
-  const requestId = Number(result.lastInsertRowid);
-  addRequestEvent(requestId, null, "submitted", "Request submitted for facility review.", viewer.id);
-  notifyReviewers(facilityId, "New coordination request", "A new request needs facility review.");
-  writeAudit(viewer.id, "request_submitted", "blood_request", requestId, { facilityId, bloodGroup, component, quantity });
-  res.status(201).json({ request: requestDto(requestRow(requestId)!) });
+    const results: PublicAvailability[] = rows.map((row) => ({ ...row, state: availabilityState(Number(row.availableQuantity), row.lastUpdated, STALE_AFTER_HOURS) }));
+    await writeAudit(null, "public_search", "availability", "district-filter", { district: district || "all", count: results.length });
+    res.json({ results, staleAfterHours: STALE_AFTER_HOURS });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/public/facilities", async (_req, res, next) => {
+  try {
+    res.json({ facilities: await query("SELECT id, name, district, facility_type as facilityType, public_contact as contact, operating_hours as operatingHours FROM facilities WHERE verification_status = 'verified' AND accepts_requests = 1 ORDER BY name") });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/requests", requireAuth, async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    let rows: RequestRow[];
+    if (viewer.role === "platform_admin") {
+      rows = await query<RequestRow>("SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id ORDER BY br.updated_at DESC");
+    } else if (facilityRoles.has(viewer.role) && viewer.facilityId) {
+      rows = await query<RequestRow>("SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id WHERE br.facility_id = ? ORDER BY br.updated_at DESC", [viewer.facilityId]);
+    } else {
+      rows = await query<RequestRow>("SELECT br.*, f.name as facility_name FROM blood_requests br JOIN facilities f ON f.id = br.facility_id WHERE br.requester_id = ? ORDER BY br.updated_at DESC", [viewer.id]);
+    }
+    const includeInternal = facilityRoles.has(viewer.role) || viewer.role === "platform_admin";
+    res.json({ requests: await Promise.all(rows.map((row) => requestDto(row, includeInternal))) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/requests", requireAuth, requireRoles("requester", "donor"), writeRateLimit, async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const facilityId = positiveInteger(req.body?.facilityId);
+    const quantity = positiveInteger(req.body?.quantity);
+    const patientInitials = text(req.body?.patientInitials, 32);
+    const relationship = text(req.body?.relationship, 80);
+    const bloodGroup = text(req.body?.bloodGroup, 4);
+    const rhFactor = text(req.body?.rhFactor, 2);
+    const component = text(req.body?.component, 80);
+    const urgency = text(req.body?.urgency, 32);
+    const district = text(req.body?.district, 80);
+    const neededBy = text(req.body?.neededBy, 40);
+    const clientToken = text(req.body?.clientToken, 100);
+    if (!facilityId || !quantity || !patientInitials || !relationship || !validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !urgency || !district || !neededBy) return apiError(res, 400, "Complete all required request fields with a supported blood group and component.");
+    const requiredBy = new Date(neededBy);
+    if (Number.isNaN(requiredBy.getTime()) || requiredBy.getTime() <= Date.now()) return apiError(res, 400, "Choose a future needed-by date and time.");
+    const facility = await one<{ id: number }>("SELECT id FROM facilities WHERE id = ? AND verification_status = 'verified' AND accepts_requests = 1 LIMIT 1", [facilityId]);
+    if (!facility) return apiError(res, 400, "Choose a verified facility that is accepting requests.");
+    if (clientToken) {
+      const duplicate = await one<{ id: number }>("SELECT id FROM blood_requests WHERE requester_id = ? AND client_token = ? LIMIT 1", [viewer.id, clientToken]);
+      if (duplicate) {
+        const existing = await requestRow(duplicate.id);
+        if (existing) return res.json({ request: await requestDto(existing), duplicate: true });
+      }
+    }
+    const createdAt = new Date().toISOString();
+    const result = await execute(
+      `INSERT INTO blood_requests (reference, requester_id, facility_id, client_token, patient_initials, requester_relationship, blood_group, rh_factor, component, quantity, urgency, district, needed_by, status, requester_visible_message, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?)`,
+      [makeRequestReference(), viewer.id, facilityId, clientToken || null, patientInitials, relationship, bloodGroup, rhFactor, component, quantity, urgency, district, requiredBy.toISOString(), "Your request has been submitted for facility review. It is not a reservation or medical confirmation.", createdAt, createdAt]
+    );
+    const requestId = Number(result.insertId);
+    await addRequestEvent(requestId, null, "submitted", "Request submitted for facility review.", viewer.id);
+    await notifyReviewers(facilityId, "New coordination request", "A new request needs facility review.");
+    await writeAudit(viewer.id, "request_submitted", "blood_request", requestId, { facilityId, bloodGroup, component, quantity });
+    const row = await requestRow(requestId);
+    res.status(201).json({ request: await requestDto(row!) });
+  } catch (error) { next(error); }
 });
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, callback) => {
-    const allowed = new Set(["application/pdf", "image/jpeg", "image/png"]);
-    callback(null, allowed.has(file.mimetype));
-  }
+  fileFilter: (_req, file, callback) => callback(null, new Set(["application/pdf", "image/jpeg", "image/png"]).has(file.mimetype))
 });
 
-app.post("/api/requests/:id/document", requireAuth, upload.single("document"), (req: AuthRequest, res) => {
-  const requestId = positiveInteger(req.params.id);
-  const viewer = req.viewer!;
-  if (!requestId) return apiError(res, 400, "Invalid request identifier.");
-  const row = requestRow(requestId);
-  if (!row || !mayAccessRequest(viewer, row)) return apiError(res, 404, "Request not found.");
-  if (viewer.id !== row.requester_id && viewer.role !== "platform_admin") return apiError(res, 403, "Only the requester may add a supporting document.");
-  if (!req.file) return apiError(res, 400, "Upload a PDF, JPG, JPEG, or PNG file up to 5 MB.");
-  const allowed = new Set(["application/pdf", "image/jpeg", "image/png"]);
-  if (!allowed.has(req.file.mimetype)) return apiError(res, 400, "Only PDF, JPG, JPEG, and PNG files are permitted.");
-  const extension = req.file.mimetype === "application/pdf" ? ".pdf" : req.file.mimetype === "image/png" ? ".png" : ".jpg";
-  const storageName = `${randomUUID()}${extension}`;
-  writeFileSync(join(uploadsDirectory, storageName), req.file.buffer, { flag: "wx" });
-  const createdAt = new Date().toISOString();
-  const result = db
-    .prepare(
-      "INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_validation', ?)"
-    )
-    .run(requestId, viewer.id, text(req.file.originalname, 160) || `supporting-document${extension}`, storageName, req.file.mimetype, req.file.size, hashDocument(req.file.buffer), createdAt);
-  writeAudit(viewer.id, "document_uploaded", "request_document", Number(result.lastInsertRowid), { requestId, mimeType: req.file.mimetype, size: req.file.size });
-  res.status(201).json({ document: { id: Number(result.lastInsertRowid), originalName: text(req.file.originalname, 160), scanStatus: "pending_validation", createdAt } });
+app.post("/api/requests/:id/document", requireAuth, upload.single("document"), async (req: AuthRequest, res, next) => {
+  try {
+    const requestId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    if (!requestId) return apiError(res, 400, "Invalid request identifier.");
+    const row = await requestRow(requestId);
+    if (!row || !mayAccessRequest(viewer, row)) return apiError(res, 404, "Request not found.");
+    if (viewer.id !== row.requester_id && viewer.role !== "platform_admin") return apiError(res, 403, "Only the requester may add a supporting document.");
+    if (!req.file) return apiError(res, 400, "Upload a PDF, JPG, JPEG, or PNG file up to 5 MB.");
+    const extension = req.file.mimetype === "application/pdf" ? ".pdf" : req.file.mimetype === "image/png" ? ".png" : ".jpg";
+    const storageName = `${randomUUID()}${extension}`;
+    writeFileSync(join(uploadsDirectory, storageName), req.file.buffer, { flag: "wx" });
+    const createdAt = new Date().toISOString();
+    const documentResult = await execute(
+      "INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_validation', ?)",
+      [requestId, viewer.id, text(req.file.originalname, 160) || `supporting-document${extension}`, storageName, req.file.mimetype, req.file.size, hashDocument(req.file.buffer), createdAt]
+    );
+    await writeAudit(viewer.id, "document_uploaded", "request_document", Number(documentResult.insertId), { requestId, mimeType: req.file.mimetype, size: req.file.size });
+    res.status(201).json({ document: { id: Number(documentResult.insertId), originalName: text(req.file.originalname, 160), scanStatus: "pending_validation", createdAt } });
+  } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/status", requireAuth, requireRoles("reviewer", "facility_admin", "platform_admin"), (req: AuthRequest, res) => {
-  const requestId = positiveInteger(req.params.id);
-  const viewer = req.viewer!;
-  const targetStatus = text(req.body?.status, 40) as RequestStatus;
-  const note = text(req.body?.message, 700);
-  if (!requestId || !Object.hasOwn(REQUEST_STATUS_LABELS, targetStatus)) return apiError(res, 400, "Choose a valid status.");
-  const row = requestRow(requestId);
-  if (!row || !mayAccessRequest(viewer, row)) return apiError(res, 404, "Request not found.");
-  if (viewer.role !== "platform_admin" && !hasVerifiedFacility(viewer)) return apiError(res, 403, "Your facility must be verified before it can update requests.");
-  if (!canTransition(row.status, targetStatus)) return apiError(res, 409, `Cannot move this request from ${REQUEST_STATUS_LABELS[row.status]} to ${REQUEST_STATUS_LABELS[targetStatus]}.`);
-  if (["rejected", "cancelled", "unable_to_fulfill"].includes(targetStatus) && !note) return apiError(res, 400, "A requester-safe explanation is required for this outcome.");
-  const message = note || statusMessage(targetStatus);
-  const updatedAt = new Date().toISOString();
-  db.prepare("UPDATE blood_requests SET status = ?, requester_visible_message = ?, updated_at = ? WHERE id = ?").run(targetStatus, message, updatedAt, requestId);
-  addRequestEvent(requestId, row.status, targetStatus, message, viewer.id);
-  createNotification(row.requester_id, "request", `Request ${row.reference} updated`, message);
-  writeAudit(viewer.id, "request_status_changed", "blood_request", requestId, { from: row.status, to: targetStatus });
-  res.json({ request: requestDto(requestRow(requestId)!, true) });
+app.post("/api/requests/:id/status", requireAuth, requireRoles("reviewer", "facility_admin", "platform_admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const requestId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    const targetStatus = text(req.body?.status, 50) as RequestStatus;
+    const note = text(req.body?.message, 700);
+    if (!requestId || !Object.hasOwn(REQUEST_STATUS_LABELS, targetStatus)) return apiError(res, 400, "Choose a valid status.");
+    const row = await requestRow(requestId);
+    if (!row || !mayAccessRequest(viewer, row)) return apiError(res, 404, "Request not found.");
+    if (viewer.role !== "platform_admin" && !(await hasVerifiedFacility(viewer))) return apiError(res, 403, "Your facility must be verified before it can update requests.");
+    if (!canTransition(row.status, targetStatus)) return apiError(res, 409, `Cannot move this request from ${REQUEST_STATUS_LABELS[row.status]} to ${REQUEST_STATUS_LABELS[targetStatus]}.`);
+    if (["rejected", "cancelled", "unable_to_fulfill"].includes(targetStatus) && !note) return apiError(res, 400, "A requester-safe explanation is required for this outcome.");
+    const message = note || statusMessage(targetStatus);
+    await execute("UPDATE blood_requests SET status = ?, requester_visible_message = ?, updated_at = ? WHERE id = ?", [targetStatus, message, new Date().toISOString(), requestId]);
+    await addRequestEvent(requestId, row.status, targetStatus, message, viewer.id);
+    await createNotification(row.requester_id, "request", `Request ${row.reference} updated`, message);
+    await writeAudit(viewer.id, "request_status_changed", "blood_request", requestId, { from: row.status, to: targetStatus });
+    res.json({ request: await requestDto((await requestRow(requestId))!, true) });
+  } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/notes", requireAuth, requireVerifiedFacility, (req: AuthRequest, res) => {
-  const requestId = positiveInteger(req.params.id);
-  const viewer = req.viewer!;
-  const body = text(req.body?.body, 1200);
-  if (!requestId || !body) return apiError(res, 400, "Write a concise internal note.");
-  const row = requestRow(requestId);
-  if (!row || viewer.facilityId !== row.facility_id) return apiError(res, 404, "Request not found.");
-  const result = db.prepare("INSERT INTO request_notes (request_id, author_user_id, body, created_at) VALUES (?, ?, ?, ?)").run(requestId, viewer.id, body, new Date().toISOString());
-  writeAudit(viewer.id, "request_note_added", "request_note", Number(result.lastInsertRowid), { requestId });
-  res.status(201).json({ note: requestNotes(requestId)[0] });
+app.post("/api/requests/:id/notes", requireAuth, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const requestId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    const body = text(req.body?.body, 1200);
+    if (!requestId || !body) return apiError(res, 400, "Write a concise internal note.");
+    const row = await requestRow(requestId);
+    if (!row || viewer.facilityId !== row.facility_id) return apiError(res, 404, "Request not found.");
+    const result = await execute("INSERT INTO request_notes (request_id, author_user_id, body, created_at) VALUES (?, ?, ?, ?)", [requestId, viewer.id, body, new Date().toISOString()]);
+    await writeAudit(viewer.id, "request_note_added", "request_note", Number(result.insertId), { requestId });
+    const notes = await requestNotes(requestId);
+    res.status(201).json({ note: notes[0] });
+  } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/outreach", requireAuth, requireRoles("reviewer", "facility_admin"), (req: AuthRequest, res) => {
-  const requestId = positiveInteger(req.params.id);
-  const viewer = req.viewer!;
-  if (!requestId || !hasVerifiedFacility(viewer)) return apiError(res, 403, "Only an authorized reviewer at a verified facility can start outreach.");
-  const row = requestRow(requestId);
-  if (!row || viewer.facilityId !== row.facility_id) return apiError(res, 404, "Request not found.");
-  if (row.status !== "inventory_unavailable") return apiError(res, 409, "Outreach is only available after a verified request is marked Inventory unavailable.");
-  const candidates = db
-    .prepare(
-      `SELECT d.user_id as userId
-       FROM donor_profiles d JOIN users u ON u.id = d.user_id
+app.post("/api/requests/:id/outreach", requireAuth, requireRoles("reviewer", "facility_admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const requestId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    if (!requestId || !(await hasVerifiedFacility(viewer))) return apiError(res, 403, "Only an authorized reviewer at a verified facility can start outreach.");
+    const row = await requestRow(requestId);
+    if (!row || viewer.facilityId !== row.facility_id) return apiError(res, 404, "Request not found.");
+    if (row.status !== "inventory_unavailable") return apiError(res, 409, "Outreach is only available after a verified request is marked Inventory unavailable.");
+    const candidates = await query<{ userId: number }>(
+      `SELECT d.user_id as userId FROM donor_profiles d
        WHERE d.outreach_consent = 1 AND d.availability = 'available' AND d.district = ?
          AND d.self_reported_group = ? AND d.self_reported_rh = ?
          AND (d.last_contact_at IS NULL OR d.last_contact_at < ?)
-       ORDER BY d.last_contact_at ASC LIMIT 25`
-    )
-    .all(row.district, row.blood_group, row.rh_factor, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()) as Array<{ userId: number }>;
-  if (candidates.length === 0) return apiError(res, 409, "No consented, available donors meet the configured outreach criteria right now.");
-  const createdAt = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const campaignId = Number(
-    db.prepare("INSERT INTO outreach_campaigns (request_id, facility_id, launched_by_user_id, candidate_count, status, expires_at, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?)").run(requestId, row.facility_id, viewer.id, candidates.length, expiresAt, createdAt).lastInsertRowid
-  );
-  const addRecipient = db.prepare("INSERT INTO campaign_recipients (campaign_id, donor_user_id, status, sent_at) VALUES (?, ?, 'pending', ?)");
-  const updateContact = db.prepare("UPDATE donor_profiles SET last_contact_at = ?, updated_at = ? WHERE user_id = ?");
-  candidates.forEach((candidate) => {
-    addRecipient.run(campaignId, candidate.userId, createdAt);
-    updateContact.run(createdAt, createdAt, candidate.userId);
-    createNotification(candidate.userId, "outreach", "Facility contact invitation", `A verified facility requests permission to contact you about a ${row.blood_group}${row.rh_factor} ${row.component} need. No patient identity is shared.`);
-  });
-  db.prepare("UPDATE blood_requests SET status = 'donor_outreach_active', requester_visible_message = ?, updated_at = ? WHERE id = ?").run(statusMessage("donor_outreach_active"), createdAt, requestId);
-  addRequestEvent(requestId, "inventory_unavailable", "donor_outreach_active", "A controlled, privacy-safe donor outreach was started.", viewer.id);
-  createNotification(row.requester_id, "request", `Request ${row.reference} outreach started`, statusMessage("donor_outreach_active"));
-  writeAudit(viewer.id, "outreach_launched", "outreach_campaign", campaignId, { requestId, candidateCount: candidates.length });
-  res.status(201).json({ campaign: { id: campaignId, candidateCount: candidates.length, expiresAt }, request: requestDto(requestRow(requestId)!, true) });
+       ORDER BY d.last_contact_at ASC LIMIT 25`,
+      [row.district, row.blood_group, row.rh_factor, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()]
+    );
+    if (!candidates.length) return apiError(res, 409, "No consented, available donors meet the configured outreach criteria right now.");
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const campaignId = await transaction(async (connection) => {
+      const [campaign] = await connection.execute<ResultSetHeader>(
+        "INSERT INTO outreach_campaigns (request_id, facility_id, launched_by_user_id, candidate_count, status, expires_at, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
+        [requestId, row.facility_id, viewer.id, candidates.length, expiresAt, createdAt]
+      );
+      const id = Number(campaign.insertId);
+      for (const candidate of candidates) {
+        await connection.execute("INSERT INTO campaign_recipients (campaign_id, donor_user_id, status, sent_at) VALUES (?, ?, 'pending', ?)", [id, candidate.userId, createdAt]);
+        await connection.execute("UPDATE donor_profiles SET last_contact_at = ?, updated_at = ? WHERE user_id = ?", [createdAt, createdAt, candidate.userId]);
+      }
+      await connection.execute("UPDATE blood_requests SET status = 'donor_outreach_active', requester_visible_message = ?, updated_at = ? WHERE id = ?", [statusMessage("donor_outreach_active"), createdAt, requestId]);
+      return id;
+    });
+    await Promise.all(candidates.map((candidate) => createNotification(candidate.userId, "outreach", "Facility contact invitation", `A verified facility requests permission to contact you about a ${row.blood_group}${row.rh_factor} ${row.component} need. No patient identity is shared.`)));
+    await addRequestEvent(requestId, "inventory_unavailable", "donor_outreach_active", "A controlled, privacy-safe donor outreach was started.", viewer.id);
+    await createNotification(row.requester_id, "request", `Request ${row.reference} outreach started`, statusMessage("donor_outreach_active"));
+    await writeAudit(viewer.id, "outreach_launched", "outreach_campaign", campaignId, { requestId, candidateCount: candidates.length });
+    res.status(201).json({ campaign: { id: campaignId, candidateCount: candidates.length, expiresAt }, request: await requestDto((await requestRow(requestId))!, true) });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/inventory", requireAuth, requireVerifiedFacility, (req: AuthRequest, res) => {
-  const viewer = req.viewer!;
-  const inventory = db
-    .prepare(
+app.get("/api/inventory", requireAuth, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const inventory = await query<InventoryRow>(
       `SELECT i.id, i.blood_group as bloodGroup, i.rh_factor as rhFactor, i.component, i.available_quantity as availableQuantity, i.reserved_quantity as reservedQuantity,
-              i.public_visible as publicVisible, i.last_updated as lastUpdated, u.name as updatedBy, i.last_reason as reason
+              i.public_visible as publicVisible, i.last_updated as lastUpdated, COALESCE(u.name, 'System') as updatedBy, i.last_reason as reason
        FROM inventory_records i LEFT JOIN users u ON u.id = i.updated_by_user_id
-       WHERE i.facility_id = ? ORDER BY i.component, i.blood_group, i.rh_factor`
-    )
-    .all(viewer.facilityId) as unknown as InventoryItem[];
-  res.json({ inventory: inventory.map((item) => ({ ...item, publicVisible: Boolean(item.publicVisible) })) });
+       WHERE i.facility_id = ? ORDER BY i.component, i.blood_group, i.rh_factor`,
+      [req.viewer!.facilityId]
+    );
+    res.json({ inventory: inventory.map((item) => ({ ...item, publicVisible: Boolean(item.publicVisible) })) });
+  } catch (error) { next(error); }
 });
 
-app.post("/api/inventory", requireAuth, requireRoles("inventory_manager", "facility_admin"), requireVerifiedFacility, (req: AuthRequest, res) => {
-  const viewer = req.viewer!;
-  const bloodGroup = text(req.body?.bloodGroup, 4);
-  const rhFactor = text(req.body?.rhFactor, 2);
-  const component = text(req.body?.component, 32);
-  const availableQuantity = Number(req.body?.availableQuantity);
-  const reservedQuantity = Number(req.body?.reservedQuantity ?? 0);
-  const reason = text(req.body?.reason, 60);
-  const note = text(req.body?.note, 500);
-  const publicVisible = req.body?.publicVisible !== false;
-  if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !Number.isInteger(availableQuantity) || availableQuantity < 0 || !Number.isInteger(reservedQuantity) || reservedQuantity < 0 || !reason) {
-    return apiError(res, 400, "Enter a valid non-negative availability value, component, and adjustment reason.");
-  }
-  const current = db.prepare("SELECT id, available_quantity as availableQuantity FROM inventory_records WHERE facility_id = ? AND blood_group = ? AND rh_factor = ? AND component = ?").get(viewer.facilityId, bloodGroup, rhFactor, component) as { id: number; availableQuantity: number } | undefined;
-  const updatedAt = new Date().toISOString();
-  let recordId: number;
-  const previous = current?.availableQuantity ?? 0;
-  if (current) {
-    db.prepare("UPDATE inventory_records SET available_quantity = ?, reserved_quantity = ?, public_visible = ?, last_updated = ?, updated_by_user_id = ?, last_reason = ? WHERE id = ?").run(availableQuantity, reservedQuantity, publicVisible ? 1 : 0, updatedAt, viewer.id, reason, current.id);
-    recordId = current.id;
-  } else {
-    recordId = Number(db.prepare("INSERT INTO inventory_records (facility_id, blood_group, rh_factor, component, available_quantity, reserved_quantity, public_visible, last_updated, updated_by_user_id, last_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(viewer.facilityId, bloodGroup, rhFactor, component, availableQuantity, reservedQuantity, publicVisible ? 1 : 0, updatedAt, viewer.id, reason).lastInsertRowid);
-  }
-  db.prepare("INSERT INTO inventory_adjustments (inventory_record_id, editor_user_id, previous_quantity, new_quantity, reason, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(recordId, viewer.id, previous, availableQuantity, reason, note || null, updatedAt);
-  writeAudit(viewer.id, "inventory_updated", "inventory_record", recordId, { previous, availableQuantity, reason, publicVisible });
-  res.status(201).json({ inventoryId: recordId });
+app.post("/api/inventory", requireAuth, requireRoles("inventory_manager", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const bloodGroup = text(req.body?.bloodGroup, 4);
+    const rhFactor = text(req.body?.rhFactor, 2);
+    const component = text(req.body?.component, 80);
+    const availableQuantity = Number(req.body?.availableQuantity);
+    const reservedQuantity = Number(req.body?.reservedQuantity ?? 0);
+    const reason = text(req.body?.reason, 80);
+    const note = text(req.body?.note, 500);
+    const publicVisible = req.body?.publicVisible !== false;
+    if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !validComponents.has(component) || !Number.isInteger(availableQuantity) || availableQuantity < 0 || !Number.isInteger(reservedQuantity) || reservedQuantity < 0 || !reason) return apiError(res, 400, "Enter a valid non-negative availability value, component, and adjustment reason.");
+    const updatedAt = new Date().toISOString();
+    const recordId = await transaction(async (connection) => {
+      const [currentRaw] = await connection.execute(
+        "SELECT id, available_quantity as availableQuantity FROM inventory_records WHERE facility_id = ? AND blood_group = ? AND rh_factor = ? AND component = ? FOR UPDATE",
+        [viewer.facilityId, bloodGroup, rhFactor, component]
+      );
+      const currentRows = currentRaw as Array<{ id: number; availableQuantity: number }>;
+      const current = currentRows[0];
+      let id: number;
+      let previous = 0;
+      if (current) {
+        id = Number(current.id); previous = Number(current.availableQuantity);
+        await connection.execute("UPDATE inventory_records SET available_quantity = ?, reserved_quantity = ?, public_visible = ?, last_updated = ?, updated_by_user_id = ?, last_reason = ? WHERE id = ?", [availableQuantity, reservedQuantity, publicVisible ? 1 : 0, updatedAt, viewer.id, reason, id]);
+      } else {
+        const [created] = await connection.execute<ResultSetHeader>("INSERT INTO inventory_records (facility_id, blood_group, rh_factor, component, available_quantity, reserved_quantity, public_visible, last_updated, updated_by_user_id, last_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [viewer.facilityId, bloodGroup, rhFactor, component, availableQuantity, reservedQuantity, publicVisible ? 1 : 0, updatedAt, viewer.id, reason]);
+        id = Number(created.insertId);
+      }
+      await connection.execute("INSERT INTO inventory_adjustments (inventory_record_id, editor_user_id, previous_quantity, new_quantity, reason, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [id, viewer.id, previous, availableQuantity, reason, note || null, updatedAt]);
+      return id;
+    });
+    await writeAudit(viewer.id, "inventory_updated", "inventory_record", recordId, { availableQuantity, reason, publicVisible });
+    res.status(201).json({ inventoryId: recordId });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/donor/profile", requireAuth, requireRoles("donor"), (req: AuthRequest, res) => {
-  const row = db
-    .prepare(
+app.get("/api/donor/profile", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+  try {
+    const profile = await one<DonorProfileRow>(
       `SELECT id, self_reported_group as selfReportedGroup, self_reported_rh as selfReportedRh, district, availability,
               outreach_consent as outreachConsent, contact_window as contactWindow, max_contacts_per_month as maxContactsPerMonth,
               pre_screening_result as preScreeningResult, policy_version as policyVersion, last_donation_date as lastDonationDate
-       FROM donor_profiles WHERE user_id = ?`
-    )
-    .get(req.viewer!.id) as DonorProfile | undefined;
-  if (!row) return apiError(res, 404, "Donor profile not found.");
-  res.json({ profile: { ...row, outreachConsent: Boolean(row.outreachConsent) } });
+       FROM donor_profiles WHERE user_id = ? LIMIT 1`,
+      [req.viewer!.id]
+    );
+    if (!profile) return apiError(res, 404, "Donor profile not found.");
+    res.json({ profile: { ...profile, outreachConsent: Boolean(profile.outreachConsent) } });
+  } catch (error) { next(error); }
 });
 
-app.patch("/api/donor/profile", requireAuth, requireRoles("donor"), (req: AuthRequest, res) => {
-  const viewer = req.viewer!;
-  const availability = text(req.body?.availability, 40);
-  const outreachConsent = Boolean(req.body?.outreachConsent);
-  const contactWindow = text(req.body?.contactWindow, 80);
-  const maxContacts = Number(req.body?.maxContactsPerMonth);
-  const allowedAvailability = new Set(["available", "unavailable", "temporarily_deferred", "opted_out"]);
-  if (!allowedAvailability.has(availability) || !contactWindow || !Number.isInteger(maxContacts) || maxContacts < 1 || maxContacts > 4) {
-    return apiError(res, 400, "Choose a valid availability state, contact window, and monthly contact limit.");
-  }
-  const storedAvailability = outreachConsent ? availability : "opted_out";
-  db.prepare("UPDATE donor_profiles SET availability = ?, outreach_consent = ?, contact_window = ?, max_contacts_per_month = ?, updated_at = ? WHERE user_id = ?").run(storedAvailability, outreachConsent ? 1 : 0, contactWindow, maxContacts, new Date().toISOString(), viewer.id);
-  writeAudit(viewer.id, "donor_preferences_updated", "donor_profile", viewer.id, { availability: storedAvailability, outreachConsent, maxContacts });
-  res.json({ ok: true });
+app.patch("/api/donor/profile", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const availability = text(req.body?.availability, 50);
+    const outreachConsent = Boolean(req.body?.outreachConsent);
+    const contactWindow = text(req.body?.contactWindow, 100);
+    const maxContacts = Number(req.body?.maxContactsPerMonth);
+    const allowedAvailability = new Set(["available", "unavailable", "temporarily_deferred", "opted_out"]);
+    if (!allowedAvailability.has(availability) || !contactWindow || !Number.isInteger(maxContacts) || maxContacts < 1 || maxContacts > 4) return apiError(res, 400, "Choose a valid availability state, contact window, and monthly contact limit.");
+    const storedAvailability = outreachConsent ? availability : "opted_out";
+    await execute("UPDATE donor_profiles SET availability = ?, outreach_consent = ?, contact_window = ?, max_contacts_per_month = ?, updated_at = ? WHERE user_id = ?", [storedAvailability, outreachConsent ? 1 : 0, contactWindow, maxContacts, new Date().toISOString(), viewer.id]);
+    await writeAudit(viewer.id, "donor_preferences_updated", "donor_profile", viewer.id, { availability: storedAvailability, outreachConsent, maxContacts });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/donor/invitations", requireAuth, requireRoles("donor"), (req: AuthRequest, res) => {
-  const invitations = db
-    .prepare(
+app.get("/api/donor/invitations", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+  try {
+    const invitations = await query<Invitation>(
       `SELECT cr.id, cr.campaign_id as campaignId, br.reference as requestReference, f.name as facilityName, br.blood_group as bloodGroup, br.rh_factor as rhFactor,
               br.component, c.expires_at as expiresAt, cr.status, cr.sent_at as createdAt
        FROM campaign_recipients cr
        JOIN outreach_campaigns c ON c.id = cr.campaign_id
        JOIN blood_requests br ON br.id = c.request_id
        JOIN facilities f ON f.id = c.facility_id
-       WHERE cr.donor_user_id = ? ORDER BY cr.sent_at DESC`
-    )
-    .all(req.viewer!.id) as unknown as Invitation[];
-  res.json({ invitations });
+       WHERE cr.donor_user_id = ? ORDER BY cr.sent_at DESC`,
+      [req.viewer!.id]
+    );
+    res.json({ invitations });
+  } catch (error) { next(error); }
 });
 
-app.post("/api/donor/invitations/:id/respond", requireAuth, requireRoles("donor"), (req: AuthRequest, res) => {
-  const recipientId = positiveInteger(req.params.id);
-  const viewer = req.viewer!;
-  const response = text(req.body?.response, 16);
-  const statusMap: Record<string, "interested" | "declined" | "stopped"> = { interested: "interested", declined: "declined", stopped: "stopped" };
-  if (!recipientId || !statusMap[response]) return apiError(res, 400, "Choose an invitation response.");
-  const recipient = db
-    .prepare(
+app.post("/api/donor/invitations/:id/respond", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+  try {
+    const recipientId = positiveInteger(req.params.id);
+    const viewer = req.viewer!;
+    const response = text(req.body?.response, 16);
+    const statusMap: Record<string, "interested" | "declined" | "stopped"> = { interested: "interested", declined: "declined", stopped: "stopped" };
+    if (!recipientId || !statusMap[response]) return apiError(res, 400, "Choose an invitation response.");
+    const recipient = await one<{ id: number; status: string; requestId: number }>(
       `SELECT cr.id, cr.status, c.request_id as requestId
        FROM campaign_recipients cr JOIN outreach_campaigns c ON c.id = cr.campaign_id
-       WHERE cr.id = ? AND cr.donor_user_id = ?`
-    )
-    .get(recipientId, viewer.id) as { id: number; status: string; requestId: number } | undefined;
-  if (!recipient) return apiError(res, 404, "Invitation not found.");
-  if (recipient.status !== "pending") return apiError(res, 409, "This invitation has already been answered.");
-  const createdAt = new Date().toISOString();
-  db.prepare("UPDATE campaign_recipients SET status = ?, responded_at = ? WHERE id = ?").run(statusMap[response], createdAt, recipientId);
-  if (response === "stopped") {
-    db.prepare("UPDATE donor_profiles SET outreach_consent = 0, availability = 'opted_out', updated_at = ? WHERE user_id = ?").run(createdAt, viewer.id);
-  }
-  const row = requestRow(recipient.requestId);
-  if (response === "interested" && row && row.status === "donor_outreach_active") {
-    db.prepare("UPDATE blood_requests SET status = 'donor_response_received', requester_visible_message = ?, updated_at = ? WHERE id = ?").run(statusMessage("donor_response_received"), createdAt, row.id);
-    addRequestEvent(row.id, "donor_outreach_active", "donor_response_received", "A donor indicated interest. The facility must handle the next step.", viewer.id);
-    notifyReviewers(row.facility_id, "Donor response received", "A donor indicated interest and needs coordinator follow-up.");
-  }
-  writeAudit(viewer.id, "outreach_response", "campaign_recipient", recipientId, { response });
-  res.json({ ok: true });
+       WHERE cr.id = ? AND cr.donor_user_id = ? LIMIT 1`,
+      [recipientId, viewer.id]
+    );
+    if (!recipient) return apiError(res, 404, "Invitation not found.");
+    if (recipient.status !== "pending") return apiError(res, 409, "This invitation has already been answered.");
+    const createdAt = new Date().toISOString();
+    await execute("UPDATE campaign_recipients SET status = ?, responded_at = ? WHERE id = ?", [statusMap[response], createdAt, recipientId]);
+    if (response === "stopped") await execute("UPDATE donor_profiles SET outreach_consent = 0, availability = 'opted_out', updated_at = ? WHERE user_id = ?", [createdAt, viewer.id]);
+    const row = await requestRow(recipient.requestId);
+    if (response === "interested" && row && row.status === "donor_outreach_active") {
+      await execute("UPDATE blood_requests SET status = 'donor_response_received', requester_visible_message = ?, updated_at = ? WHERE id = ?", [statusMessage("donor_response_received"), createdAt, row.id]);
+      await addRequestEvent(row.id, "donor_outreach_active", "donor_response_received", "A donor indicated interest. The facility must handle the next step.", viewer.id);
+      await notifyReviewers(row.facility_id, "Donor response received", "A donor indicated interest and needs coordinator follow-up.");
+    }
+    await writeAudit(viewer.id, "outreach_response", "campaign_recipient", recipientId, { response });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/facility/dashboard", requireAuth, requireVerifiedFacility, (req: AuthRequest, res) => {
-  const viewer = req.viewer!;
-  const facility = db.prepare("SELECT id, name, district, verification_status as verificationStatus FROM facilities WHERE id = ?").get(viewer.facilityId) as FacilityDashboard["facility"];
-  const requestCounts = db.prepare("SELECT status, COUNT(*) as count FROM blood_requests WHERE facility_id = ? GROUP BY status").all(viewer.facilityId) as FacilityDashboard["requestCounts"];
-  const staleThreshold = new Date(Date.now() - STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
-  const staleCount = (db.prepare("SELECT COUNT(*) as count FROM inventory_records WHERE facility_id = ? AND last_updated < ?").get(viewer.facilityId, staleThreshold) as { count: number }).count;
-  const dayStart = new Date();
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const todayUpdates = (db.prepare("SELECT COUNT(*) as count FROM inventory_adjustments WHERE editor_user_id = ? AND created_at >= ?").get(viewer.id, dayStart.toISOString()) as { count: number }).count;
-  res.json({ dashboard: { facility, requestCounts, staleCount, todayUpdates } satisfies FacilityDashboard });
+app.get("/api/facility/dashboard", requireAuth, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+  try {
+    const viewer = req.viewer!;
+    const facility = await one<FacilityDashboard["facility"]>("SELECT id, name, district, verification_status as verificationStatus FROM facilities WHERE id = ? LIMIT 1", [viewer.facilityId]);
+    const requestCounts = await query<FacilityDashboard["requestCounts"][number]>("SELECT status, COUNT(*) as count FROM blood_requests WHERE facility_id = ? GROUP BY status", [viewer.facilityId]);
+    const staleThreshold = new Date(Date.now() - STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
+    const stale = await one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_records WHERE facility_id = ? AND last_updated < ?", [viewer.facilityId, staleThreshold]);
+    const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+    const updates = await one<{ count: number }>("SELECT COUNT(*) as count FROM inventory_adjustments WHERE editor_user_id = ? AND created_at >= ?", [viewer.id, dayStart.toISOString()]);
+    res.json({ dashboard: { facility: facility!, requestCounts, staleCount: Number(stale?.count ?? 0), todayUpdates: Number(updates?.count ?? 0) } });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/admin/overview", requireAuth, requireRoles("platform_admin"), (_req: AuthRequest, res) => {
-  const rawFacilities = db
-    .prepare(
+app.get("/api/admin/overview", requireAuth, requireRoles("platform_admin"), async (_req: AuthRequest, res, next) => {
+  try {
+    const facilities = await query<AdminFacilityRow>(
       `SELECT f.id, f.name, f.district, f.verification_status as status, f.public_availability as publicAvailability,
               (SELECT COUNT(*) FROM blood_requests br WHERE br.facility_id = f.id AND br.status NOT IN ('fulfilled','unable_to_fulfill','rejected','cancelled','expired')) as openRequests
        FROM facilities f ORDER BY f.name`
-    )
-    .all() as unknown as Array<Omit<AdminOverview["facilities"][number], "publicAvailability"> & { publicAvailability: number }>;
-  const facilities: AdminOverview["facilities"] = rawFacilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability) }));
-  const policies = db.prepare("SELECT id, name, version, effective_at as effectiveAt, summary FROM policy_versions ORDER BY effective_at DESC").all() as unknown as AdminOverview["policies"];
-  const auditEvents = db
-    .prepare(
+    );
+    const policies = await query<AdminOverview["policies"][number]>("SELECT id, name, version, effective_at as effectiveAt, summary FROM policy_versions ORDER BY effective_at DESC");
+    const auditEvents = await query<AdminOverview["auditEvents"][number]>(
       `SELECT a.id, a.action, a.entity_type as entityType, a.entity_id as entityId, COALESCE(u.name, 'System') as actorName, a.created_at as createdAt
        FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id ORDER BY a.created_at DESC, a.id DESC LIMIT 20`
-    )
-    .all() as unknown as AdminOverview["auditEvents"];
-  res.json({ overview: { facilities, policies, auditEvents } satisfies AdminOverview });
+    );
+    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents } satisfies AdminOverview });
+  } catch (error) { next(error); }
 });
 
-app.get("/api/admin/audit", requireAuth, requireRoles("platform_admin"), (_req: AuthRequest, res) => {
-  const events = db
-    .prepare(
+app.get("/api/admin/audit", requireAuth, requireRoles("platform_admin"), async (_req: AuthRequest, res, next) => {
+  try {
+    const events = await query(
       `SELECT a.id, a.action, a.entity_type as entityType, a.entity_id as entityId, a.metadata, COALESCE(u.name, 'System') as actorName, a.created_at as createdAt
        FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id ORDER BY a.created_at DESC, a.id DESC LIMIT 100`
-    )
-    .all();
-  res.json({ events });
+    );
+    res.json({ events });
+  } catch (error) { next(error); }
 });
 
 const distDirectory = join(process.cwd(), "dist");
@@ -716,10 +729,19 @@ if (existsSync(distDirectory)) {
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (error instanceof multer.MulterError) return apiError(res, 400, "The upload was not accepted. Use one PDF/JPG/PNG file no larger than 5 MB.");
-  console.error(error);
-  apiError(res, 500, "Something went wrong. No request or outreach confirmation was made.");
+  const message = error instanceof Error ? error.message : "Unexpected error";
+  console.error(JSON.stringify({ level: "error", message, timestamp: new Date().toISOString() }));
+  apiError(res, 500, "The request could not be completed. No confirmation was made.");
 });
 
-app.listen(PORT, () => {
-  console.log(`Raktakosh API running on http://localhost:${PORT}`);
+async function start(): Promise<void> {
+  if (isProduction && !frontendOrigin) throw new Error("FRONTEND_ORIGIN must be configured in production.");
+  await initializeDatabase();
+  await getPool().query("SELECT 1");
+  app.listen(PORT, () => console.log(`Raktakosh API listening on port ${PORT}`));
+}
+
+void start().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });

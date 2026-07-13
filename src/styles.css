@@ -177,6 +177,11 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .or-divider::before, .or-divider::after { height: 1px; background: var(--line); content: ""; }
 .auth-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
 .auth-form .notice { grid-column: 1 / -1; }
+.auth-mode-switch { display: inline-flex; margin: 5px 0 18px; padding: 3px; border: 1px solid var(--line); background: #f4ede2; }
+.auth-mode-switch button { min-height: 34px; border: 0; padding: 7px 13px; color: var(--ink-soft); background: transparent; font-size: 11px; font-weight: 800; }
+.auth-mode-switch button.active { color: var(--paper); background: var(--ink); }
+.account-form { grid-template-columns: 1fr 1fr; }
+.account-form > .button { grid-column: 1 / -1; }
 
 .dashboard-shell { padding: 62px 0 100px; }
 .dashboard-topline { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin-bottom: 33px; }
@@ -362,7 +367,7 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .site-footer { grid-template-columns: 1fr; gap: 18px; padding: 32px 20px; }
   .site-footer > span { text-align: left; }
   .auth-dialog { padding: 31px 22px; box-shadow: 9px 9px 0 var(--signal); }
-  .access-role-grid, .auth-form { grid-template-columns: 1fr; }
+  .access-role-grid, .auth-form, .account-form { grid-template-columns: 1fr; }
   .auth-form .button { width: 100%; }
   .dashboard-shell { padding: 36px 0 60px; }
   .dashboard-heading { align-items: flex-start; flex-direction: column; }

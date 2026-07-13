@@ -2,67 +2,85 @@
 
 **Version 1.0**
 
-Raktakosh is a full-stack web platform for structured blood-service coordination. It brings requesters, voluntary donors, verified facilities, and platform administrators into one role-based workflow for availability discovery, request handling, inventory management, controlled donor outreach, and auditability.
+Raktakosh is a full-stack platform for structured blood-service coordination. It supports public availability discovery, private blood requests, facility inventory updates, controlled donor outreach, role-aware workspaces, and audited operational events.
 
-## Key capabilities
+## Platform capabilities
 
-- Public facility availability search by district, blood group, Rh factor, and component.
-- Private requester workflow with reference tracking and supporting-document upload.
-- Facility inventory management with adjustment history and stale-record awareness.
-- Guarded request-status workflow and internal review notes.
-- Donor availability, outreach consent, and invitation-response controls.
-- Administrator visibility into facilities, policies, and system audit events.
-- Responsive English/Nepali public experience and Asia/Kathmandu date handling.
+- Public search by district, blood group, Rh factor, and component.
+- Requester registration, sign-in, private request submission, and status tracking.
+- Donor registration, outreach consent, availability preferences, and invitation responses.
+- Facility inventory management with accountable adjustment history.
+- Guarded request-review workflow with internal notes and controlled outreach.
+- Administrator views for facilities, policy versions, and audit activity.
+- English/Nepali public experience and Asia/Kathmandu time display.
 
-## Quick start
+## Architecture
 
-### Option 1: one command
-
-```powershell
-npm install
-npm run dev
+```text
+Vercel React frontend → Render Express API → TiDB Cloud / MySQL database
 ```
 
-The application automatically opens at `http://localhost:5173`.
+The frontend receives only a public API URL. Database credentials are read only by the Render backend through protected environment variables.
 
-### Option 2: Windows launcher
+## Local development
 
-After installing dependencies once with `npm install`, double-click [START-RAKTAKOSH.cmd](START-RAKTAKOSH.cmd).
+1. Install dependencies:
 
-## Useful commands
+   ```powershell
+   npm install
+   ```
+
+2. Create local configuration:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+3. Set `DATABASE_URL` in `.env` to a non-production TiDB/MySQL database.
+4. Start both frontend and backend:
+
+   ```powershell
+   npm run dev
+   ```
+
+Open `http://localhost:5173`.
+
+## Commands
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` | Start the API and web interface together. |
-| `npm run build` | Type-check and create the production web bundle. |
-| `npm test` | Run workflow and availability rule tests. |
-| `npm run serve` | Build and serve the application from one command. |
-| `npm run reset-data` | Restore the initial presentation dataset before a walkthrough. |
+| `npm run dev` | Run the Vite client and Express API together. |
+| `npm test` | Run business-rule tests. |
+| `npm run build` | Type-check and build the frontend. |
+| `npm run serve` | Build and start the backend service locally. |
 
-## Project documentation
+## Deployment
+
+The full Vercel + Render + TiDB setup is documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Key environment variables:
+
+```text
+# Render only
+DATABASE_URL=mysql://USERNAME:PASSWORD@HOST:4000/DATABASE
+FRONTEND_ORIGIN=https://your-vercel-project.vercel.app
+NODE_ENV=production
+
+# Vercel only
+VITE_API_BASE_URL=https://your-render-service.onrender.com
+```
+
+## Documentation
 
 - [Installation guide](docs/INSTALLATION.md)
+- [Deployment guide](docs/DEPLOYMENT.md)
 - [System architecture](docs/ARCHITECTURE.md)
 - [Entity relationship diagram](docs/ERD.md)
 - [Module catalogue](docs/MODULES.md)
 - [Testing report](docs/TESTING-REPORT.md)
-- [Viva walkthrough and Q&A](docs/VIVA-GUIDE.md)
+- [Viva guide](docs/VIVA-GUIDE.md)
 - [Product requirements document](docs/Raktakosh-PRD-and-MVP.md)
 
 ## Functional boundary
 
-Raktakosh coordinates information and workflow. Clinical blood matching, donor medical eligibility, reservation, testing, and transfusion decisions remain the responsibility of participating blood-service facilities.
-
-## Technology
-
-- React 19 + TypeScript + Vite
-- Node.js + Express
-- SQLite persistence using Node's built-in SQLite driver
-- Cookie-backed sessions, role-aware authorization, audit events, and validated request transitions
-
-## Verification
-
-```powershell
-npm test
-npm run build
-```
+Raktakosh coordinates information and workflow. Clinical matching, donor medical eligibility, blood testing, reservation, and transfusion decisions remain the responsibility of participating blood-service facilities.

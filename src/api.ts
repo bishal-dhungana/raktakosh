@@ -5,12 +5,14 @@ export class ApiError extends Error {
   }
 }
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
 export async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(url, { ...init, headers, credentials: "include" });
+  const response = await fetch(`${apiBaseUrl}${url}`, { ...init, headers, credentials: "include" });
   const isJson = response.headers.get("content-type")?.includes("application/json");
   const payload: unknown = isJson ? await response.json() : null;
   if (!response.ok) {

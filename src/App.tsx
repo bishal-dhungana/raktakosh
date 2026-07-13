@@ -124,7 +124,6 @@ function App() {
   const [availability, setAvailability] = useState<PublicAvailability[]>([]);
   const [searching, setSearching] = useState(true);
   const [searchFilters, setSearchFilters] = useState({ district: "Morang", bloodGroup: "", rhFactor: "+", component: "" });
-  const [accessProfiles, setAccessProfiles] = useState<Array<{ key: string; label: string; description: string }>>([]);
 
   async function loadAvailability(filters = searchFilters) {
     setSearching(true);
@@ -140,7 +139,6 @@ function App() {
 
   useEffect(() => {
     void loadAvailability();
-    void api<{ profiles: Array<{ key: string; label: string; description: string }> }>("/api/access-profiles").then((data) => setAccessProfiles(data.profiles));
     void api<{ user: CurrentUser }>("/api/auth/me")
       .then((data) => setUser(data.user))
       .catch(() => undefined);
@@ -179,7 +177,7 @@ function App() {
           {user ? (
             <>
               <button className="button button-quiet" onClick={() => setView("dashboard")}>{t(locale, "dashboard")}</button>
-              <button className="button button-quiet" onClick={() => setAuthOpen(true)}>Switch workspace</button>
+              <button className="button button-quiet" onClick={() => setAuthOpen(true)}>Account</button>
               <button className="button button-outline" onClick={() => void logout()}>{t(locale, "signOut")}</button>
             </>
           ) : (
@@ -213,7 +211,7 @@ function App() {
         <span>Asia/Kathmandu · Version 1.0</span>
       </footer>
 
-      {authOpen && <AuthDialog profiles={accessProfiles} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
+      {authOpen && <AuthDialog locale={locale} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
     </div>
   );
 }
@@ -317,13 +315,18 @@ function AvailabilityCard({ item, locale }: { item: PublicAvailability; locale: 
   );
 }
 
-function AuthDialog({ profiles, onClose, onLoggedIn }: { profiles: Array<{ key: string; label: string; description: string }>; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
+function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
+  const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "requester", bloodGroup: "", rhFactor: "+", district: "Morang", outreachConsent: false });
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
-  async function chooseProfile(profile: { key: string }) {
+  async function submit(event: FormEvent) {
+    event.preventDefault();
     setWorking(true); setError("");
     try {
-      const result = await api<{ user: CurrentUser }>("/api/auth/access-profile", { method: "POST", body: JSON.stringify({ key: profile.key }) });
+      const endpoint = mode === "signin" ? "/api/auth/login" : "/api/auth/register";
+      const payload = mode === "signin" ? { email: form.email, password: form.password } : form;
+      const result = await api<{ user: CurrentUser }>(endpoint, { method: "POST", body: JSON.stringify(payload) });
       onLoggedIn(result.user);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to sign in."); }
     finally { setWorking(false); }
@@ -333,11 +336,18 @@ function AuthDialog({ profiles, onClose, onLoggedIn }: { profiles: Array<{ key: 
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title" onMouseDown={(event) => event.stopPropagation()}>
         <button className="dialog-close" onClick={onClose} aria-label="Close sign in">×</button>
-        <Pill className="access-pill">SECURE ROLE ACCESS</Pill>
-        <h2 id="auth-title">Choose your workspace.</h2>
-        <p>Each workspace presents the information and actions appropriate to its responsibility in the coordination process.</p>
-        <div className="access-role-grid">{profiles.map((profile) => <button key={profile.key} className="access-role" onClick={() => void chooseProfile(profile)} disabled={working}><span>{profile.label}</span><small>{profile.description}</small><b>{working ? "Opening…" : "Open →"}</b></button>)}</div>
+        <Pill className="access-pill">SECURE ACCOUNT ACCESS</Pill>
+        <h2 id="auth-title">{mode === "signin" ? "Welcome back." : "Create your account."}</h2>
+        <p>{mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Facility staff accounts are provisioned by an authorized administrator."}</p>
+        <div className="auth-mode-switch" role="tablist" aria-label="Account access mode"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }} role="tab" aria-selected={mode === "signin"}>Sign in</button><button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }} role="tab" aria-selected={mode === "register"}>Create account</button></div>
+        <form className="auth-form account-form" onSubmit={submit}>
+          {mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
+          <label><span>Email address</span><input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required autoComplete="email" /></label>
+          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={mode === "register" ? 10 : undefined} required autoComplete={mode === "signin" ? "current-password" : "new-password"} /></label>
+          {mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
         {error && <Notice tone="warning">{error}</Notice>}
+          <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
+        </form>
       </section>
     </div>
   );
