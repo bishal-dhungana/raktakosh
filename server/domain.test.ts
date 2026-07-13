@@ -4,7 +4,7 @@ import { availabilityState, canTransition, isStale } from "./domain";
 import { canViewFacilityCasework } from "./facility-access";
 import { deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, preliminaryEligibilityStatus } from "../src/donor-screening";
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
-import { detectDocumentMime, safeDocumentName, validateDocument } from "./document-storage";
+import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, safeDocumentName, scanDocument, validateDocument } from "./document-storage";
 
 test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(NEPAL_DISTRICTS.length, 77);
@@ -58,6 +58,31 @@ test("accepts only genuine PDF/JPEG/PNG verification documents", () => {
   assert.throws(() => validateDocument(pdf, "image/png"));
   assert.throws(() => validateDocument(Buffer.from("not a document"), "application/pdf"));
   assert.equal(safeDocumentName("../Hospital slip?.PDF", "application/pdf"), ".._Hospital slip_.pdf");
+});
+
+test("labels explicitly enabled demo uploads as unscanned", async () => {
+  const keys = ["DOCUMENT_STORAGE_MODE", "DOCUMENT_SCAN_MODE", "R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    DOCUMENT_STORAGE_MODE: "r2",
+    DOCUMENT_SCAN_MODE: "basic_validation",
+    R2_BUCKET: "qa-bucket",
+    R2_ENDPOINT: "https://qa.r2.cloudflarestorage.com",
+    R2_ACCESS_KEY_ID: "qa-access-key",
+    R2_SECRET_ACCESS_KEY: "qa-secret-key"
+  });
+  try {
+    assert.equal(documentWorkflowEnabled(), true);
+    assert.equal(documentUploadSecurity(), "basic_validation");
+    const result = await scanDocument(Buffer.from("%PDF-1.7\\nQA document"), "application/pdf", "checksum");
+    assert.deepEqual(result, { status: "unscanned", provider: "basic_validation", scannedAt: null });
+  } finally {
+    for (const key of keys) {
+      const value = previous[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("does not present stale availability as current", () => {

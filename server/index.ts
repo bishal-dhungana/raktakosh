@@ -66,6 +66,7 @@ import {
   DocumentWorkflowError,
   documentObjectKey,
   documentRetentionUntil,
+  documentUploadSecurity,
   documentWorkflowEnabled,
   documentWorkflowUnavailableMessage,
   safeDocumentName,
@@ -130,7 +131,7 @@ type RequestDocumentRow = {
   mimeType: string;
   byteSize: number;
   sha256: string;
-  scanStatus: "clean" | "malicious" | "scan_error" | "pending";
+  scanStatus: "clean" | "unscanned" | "malicious" | "scan_error" | "pending";
   reviewStatus: "pending" | "accepted" | "rejected";
   reviewedAt: string | null;
   reviewedByUserId: number | null;
@@ -617,6 +618,7 @@ app.get("/api/public/config", (_req, res) => {
   res.json({
     documentUploadsEnabled: documentWorkflowEnabled(),
     documentUploadRequired: true,
+    documentUploadSecurity: documentUploadSecurity(),
     documentUploadMessage: documentWorkflowEnabled() ? null : documentWorkflowUnavailableMessage()
   });
 });
@@ -676,7 +678,7 @@ app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "d
     const mimeType = validateDocument(req.file.buffer, req.file.mimetype);
     const originalName = safeDocumentName(req.file.originalname, mimeType);
     const checksum = sha256(req.file.buffer);
-    await scanDocument(req.file.buffer, mimeType, checksum);
+    const scan = await scanDocument(req.file.buffer, mimeType, checksum);
     const createdAt = new Date().toISOString();
     const reference = makeRequestReference();
     const storageName = documentObjectKey(reference, mimeType);
@@ -688,17 +690,17 @@ app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "d
         const [requestResult] = await connection.execute<ResultSetHeader>(
           `INSERT INTO blood_requests (reference, requester_id, facility_id, client_token, patient_initials, requester_relationship, blood_group, rh_factor, component, quantity, urgency, district, needed_by, status, requester_visible_message, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'document_pending_review', ?, ?, ?)`,
-          [reference, viewer.id, facilityId, clientToken || null, patientInitials, relationship, bloodGroup, rhFactor, component, quantity, urgency, district, requiredBy.toISOString(), "Your verification document passed security screening and is pending facility review.", createdAt, createdAt]
+           [reference, viewer.id, facilityId, clientToken || null, patientInitials, relationship, bloodGroup, rhFactor, component, quantity, urgency, district, requiredBy.toISOString(), scan.status === "clean" ? "Your verification document passed security screening and is pending facility review." : "Your verification document passed basic file checks and is pending facility review. It was not malware scanned.", createdAt, createdAt]
         );
         const createdRequestId = Number(requestResult.insertId);
         const [documentResult] = await connection.execute<ResultSetHeader>(
           `INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, scan_provider, scanned_at, review_status, reviewed_by_user_id, reviewed_at, review_note, retention_until, deleted_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'clean', 'clamav', ?, 'pending', NULL, NULL, NULL, ?, NULL, ?)`,
-          [createdRequestId, viewer.id, originalName, storageName, mimeType, req.file!.size, checksum, createdAt, documentRetentionUntil(new Date(createdAt)), createdAt]
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL, ?)`,
+          [createdRequestId, viewer.id, originalName, storageName, mimeType, req.file!.size, checksum, scan.status, scan.provider, scan.scannedAt, documentRetentionUntil(new Date(createdAt)), createdAt]
         );
         await connection.execute(
           "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, NULL, 'document_pending_review', ?, ?, ?)",
-          [createdRequestId, "Verification document scanned clean and is pending facility review.", viewer.id, createdAt]
+          [createdRequestId, scan.status === "clean" ? "Verification document scanned clean and is pending facility review." : "Verification document passed basic file validation only and is pending facility review.", viewer.id, createdAt]
         );
         return { requestId: createdRequestId, documentId: Number(documentResult.insertId) };
       }));
@@ -706,8 +708,8 @@ app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "d
       await removeStoredDocument(storageName).catch(() => undefined);
       throw error;
     }
-    await notifyReviewers(facilityId, "Verification document pending review", `Request ${reference} has a clean verification document awaiting review.`);
-    await writeAudit(viewer.id, "request_submitted_with_document", "blood_request", requestId, { facilityId, bloodGroup, component, quantity, documentId, documentSha256: checksum });
+    await notifyReviewers(facilityId, "Verification document pending review", `Request ${reference} has a ${scan.status === "clean" ? "malware-scanned" : "basic-validation-only"} verification document awaiting review.`);
+    await writeAudit(viewer.id, "request_submitted_with_document", "blood_request", requestId, { facilityId, bloodGroup, component, quantity, documentId, documentSha256: checksum, documentScanStatus: scan.status, documentScanProvider: scan.provider });
     const row = await requestRow(requestId);
     res.status(201).json({ request: await requestDto(row!) });
   } catch (error) { next(error); }
@@ -725,7 +727,7 @@ app.post("/api/requests/:id/documents", requireAuth, requireCsrf, requireRoles("
     const mimeType = validateDocument(req.file.buffer, req.file.mimetype);
     const originalName = safeDocumentName(req.file.originalname, mimeType);
     const checksum = sha256(req.file.buffer);
-    await scanDocument(req.file.buffer, mimeType, checksum);
+    const scan = await scanDocument(req.file.buffer, mimeType, checksum);
     const createdAt = new Date().toISOString();
     const storageName = documentObjectKey(row.reference, mimeType);
     await storeCleanDocument({ key: storageName, buffer: req.file.buffer, mimeType, originalName, checksum });
@@ -734,13 +736,13 @@ app.post("/api/requests/:id/documents", requireAuth, requireCsrf, requireRoles("
       ({ documentId } = await transaction(async (connection) => {
         const [documentResult] = await connection.execute<ResultSetHeader>(
           `INSERT INTO request_documents (request_id, uploader_user_id, original_name, storage_name, mime_type, byte_size, sha256, scan_status, scan_provider, scanned_at, review_status, reviewed_by_user_id, reviewed_at, review_note, retention_until, deleted_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'clean', 'clamav', ?, 'pending', NULL, NULL, NULL, ?, NULL, ?)`,
-          [requestId, viewer.id, originalName, storageName, mimeType, req.file!.size, checksum, createdAt, documentRetentionUntil(new Date(createdAt)), createdAt]
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL, ?)`,
+          [requestId, viewer.id, originalName, storageName, mimeType, req.file!.size, checksum, scan.status, scan.provider, scan.scannedAt, documentRetentionUntil(new Date(createdAt)), createdAt]
         );
-        await connection.execute("UPDATE blood_requests SET status = 'document_pending_review', requester_visible_message = ?, updated_at = ? WHERE id = ?", ["Your replacement verification document passed security screening and is pending facility review.", createdAt, requestId]);
+        await connection.execute("UPDATE blood_requests SET status = 'document_pending_review', requester_visible_message = ?, updated_at = ? WHERE id = ?", [scan.status === "clean" ? "Your replacement verification document passed security screening and is pending facility review." : "Your replacement verification document passed basic file checks and is pending facility review. It was not malware scanned.", createdAt, requestId]);
         await connection.execute(
           "INSERT INTO request_events (request_id, from_status, to_status, message, actor_user_id, created_at) VALUES (?, 'needs_information', 'document_pending_review', ?, ?, ?)",
-          [requestId, "Replacement verification document scanned clean and is pending facility review.", viewer.id, createdAt]
+          [requestId, scan.status === "clean" ? "Replacement verification document scanned clean and is pending facility review." : "Replacement verification document passed basic file validation only and is pending facility review.", viewer.id, createdAt]
         );
         return { documentId: Number(documentResult.insertId) };
       }));
@@ -748,8 +750,8 @@ app.post("/api/requests/:id/documents", requireAuth, requireCsrf, requireRoles("
       await removeStoredDocument(storageName).catch(() => undefined);
       throw error;
     }
-    await notifyReviewers(row.facility_id, "Replacement verification document pending review", `Request ${row.reference} has a new clean document awaiting review.`);
-    await writeAudit(viewer.id, "replacement_document_uploaded", "request_document", documentId, { requestId, documentSha256: checksum });
+    await notifyReviewers(row.facility_id, "Replacement verification document pending review", `Request ${row.reference} has a new ${scan.status === "clean" ? "malware-scanned" : "basic-validation-only"} document awaiting review.`);
+    await writeAudit(viewer.id, "replacement_document_uploaded", "request_document", documentId, { requestId, documentSha256: checksum, documentScanStatus: scan.status, documentScanProvider: scan.provider });
     res.status(201).json({ request: await requestDto((await requestRow(requestId))!) });
   } catch (error) { next(error); }
 });
@@ -761,7 +763,7 @@ app.get("/api/request-documents/:id/download", requireAuth, async (req: AuthRequ
     if (!documentId) return apiError(res, 404, "Document not found.");
     const document = await requestDocumentForAccess(documentId);
     if (!document || document.deletedAt || !mayViewDocument(viewer, document)) return apiError(res, 404, "Document not found.");
-    if (document.scanStatus !== "clean") return apiError(res, 409, "This document is not available until its security scan is complete.");
+    if (!["clean", "unscanned"].includes(document.scanStatus)) return apiError(res, 409, "This document is not available until its security checks are complete.");
     if (new Date(document.retentionUntil).getTime() <= Date.now()) return apiError(res, 410, "This document has reached its retention deadline and is no longer available.");
     const download = await signedDocumentDownload(document.storageName, document.originalName);
     await writeAudit(viewer.id, "request_document_download_authorized", "request_document", document.id, { requestId: document.requestId, role: viewer.role, expiresAt: download.expiresAt });
@@ -778,7 +780,7 @@ app.post("/api/request-documents/:id/review", requireAuth, requireCsrf, requireR
     if (!documentId || !["accepted", "rejected"].includes(reviewStatus)) return apiError(res, 400, "Choose whether the verification document is accepted or rejected.");
     if (reviewStatus === "rejected" && !reviewNote) return apiError(res, 400, "Explain what document information is needed before rejecting it.");
     const document = await requestDocumentForAccess(documentId);
-    if (!document || document.deletedAt || document.scanStatus !== "clean") return apiError(res, 404, "Document not found.");
+    if (!document || document.deletedAt || !["clean", "unscanned"].includes(document.scanStatus)) return apiError(res, 404, "Document not found.");
     if (viewer.role !== "platform_admin" && (!canViewFacilityCasework(viewer.role) || viewer.facilityId !== document.facilityId || !(await hasVerifiedFacility(viewer)))) return apiError(res, 404, "Document not found.");
     if (document.reviewStatus !== "pending") return apiError(res, 409, "This document has already been reviewed.");
     const reviewedAt = new Date().toISOString();

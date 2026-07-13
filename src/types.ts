@@ -86,7 +86,7 @@ export interface BloodRequest {
     originalName: string;
     mimeType: string;
     byteSize: number;
-    scanStatus: "clean" | "malicious" | "scan_error" | "pending";
+    scanStatus: "clean" | "unscanned" | "malicious" | "scan_error" | "pending";
     reviewStatus: "pending" | "accepted" | "rejected";
     createdAt: string;
     reviewedAt: string | null;
@@ -203,7 +203,7 @@ export interface FacilityRequestDocument {
   originalName: string;
   mimeType: string;
   byteSize: number;
-  scanStatus: "clean" | "malicious" | "scan_error" | "pending";
+  scanStatus: "clean" | "unscanned" | "malicious" | "scan_error" | "pending";
   reviewStatus: "pending" | "accepted" | "rejected";
   createdAt: string;
   reviewedAt: string | null;

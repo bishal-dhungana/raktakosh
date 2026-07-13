@@ -7,6 +7,14 @@ const signedDownloadSeconds = 60;
 const allowedMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
 
 export type SupportedDocumentMime = "application/pdf" | "image/jpeg" | "image/png";
+export type DocumentScanStatus = "clean" | "unscanned";
+export type DocumentUploadSecurity = "malware_scanned" | "basic_validation" | "unavailable";
+
+export type DocumentScanResult = {
+  status: DocumentScanStatus;
+  provider: "clamav" | "basic_validation";
+  scannedAt: string | null;
+};
 
 export class DocumentWorkflowError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -74,7 +82,13 @@ function r2(): { client: S3Client; bucket: string } {
 }
 
 export function documentWorkflowEnabled(): boolean {
-  return process.env.DOCUMENT_STORAGE_MODE === "r2" && storageConfiguration() !== null && scannerConfiguration() !== null;
+  return documentUploadSecurity() !== "unavailable";
+}
+
+export function documentUploadSecurity(): DocumentUploadSecurity {
+  if (process.env.DOCUMENT_STORAGE_MODE !== "r2" || storageConfiguration() === null) return "unavailable";
+  if (process.env.DOCUMENT_SCAN_MODE === "basic_validation") return "basic_validation";
+  return scannerConfiguration() !== null ? "malware_scanned" : "unavailable";
 }
 
 export function documentWorkflowUnavailableMessage(): string {
@@ -133,7 +147,10 @@ export function documentRetentionUntil(reference = new Date()): string {
   return value.toISOString();
 }
 
-export async function scanDocument(buffer: Buffer, mimeType: SupportedDocumentMime, checksum: string): Promise<void> {
+export async function scanDocument(buffer: Buffer, mimeType: SupportedDocumentMime, checksum: string): Promise<DocumentScanResult> {
+  if (documentUploadSecurity() === "basic_validation") {
+    return { status: "unscanned", provider: "basic_validation", scannedAt: null };
+  }
   const scanner = scannerConfiguration();
   if (!scanner) throw new DocumentWorkflowError(documentWorkflowUnavailableMessage(), 503);
   const timeout = AbortSignal.timeout(30_000);
@@ -161,6 +178,7 @@ export async function scanDocument(buffer: Buffer, mimeType: SupportedDocumentMi
   if (!response.ok || payload?.verdict !== "clean") {
     throw new DocumentWorkflowError("Document scanning is temporarily unavailable. No request was created.", 503);
   }
+  return { status: "clean", provider: "clamav", scannedAt: new Date().toISOString() };
 }
 
 export async function storeCleanDocument(input: { key: string; buffer: Buffer; mimeType: SupportedDocumentMime; originalName: string; checksum: string }): Promise<void> {
