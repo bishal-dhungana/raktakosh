@@ -182,6 +182,16 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 .auth-mode-switch button.active { color: var(--paper); background: var(--ink); }
 .account-form { grid-template-columns: 1fr 1fr; }
 .account-form > .button { grid-column: 1 / -1; }
+.password-guidance { display: block; margin-top: -4px; color: var(--ink-soft); font-size: 10px; line-height: 1.45; }
+.mfa-dialog { width: min(640px, 100%); }
+.mfa-setup { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 22px; align-items: center; margin: 24px 0; padding: 18px; border: 1px solid var(--line); background: #fffdf9; }
+.mfa-setup img { display: block; width: 220px; height: 220px; image-rendering: pixelated; }
+.mfa-setup div { display: grid; gap: 9px; min-width: 0; }
+.mfa-setup span { color: var(--ink-soft); font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.mfa-setup code { overflow-wrap: anywhere; color: var(--ink); font-size: 14px; letter-spacing: 0.08em; }
+.mfa-setup small { color: var(--ink-soft); font-size: 10px; }
+.mfa-form { grid-template-columns: minmax(0,1fr) auto; }
+.mfa-form input { font-family: var(--mono); font-size: 18px; letter-spacing: 0.22em; }
 
 .dashboard-shell { padding: 62px 0 100px; }
 .dashboard-topline { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin-bottom: 33px; }
@@ -295,12 +305,19 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
 
 .admin-grid { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(320px,0.78fr); align-items: start; gap: 17px; }
 .audit-card { grid-column: 1 / -1; }
+.admin-staff { grid-column: 1 / -1; }
 .facility-table { display: grid; margin-top: 18px; border-top: 1px solid var(--line); }
 .table-row { display: grid; grid-template-columns: minmax(170px,1.3fr) 0.75fr 0.55fr 0.45fr; gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 10px; }
 .table-row > div { display: grid; gap: 2px; }
 .table-row b { font-size: 11px; }
 .table-row small { color: var(--ink-soft); font-size: 9px; }
 .table-head { color: var(--ink-soft); font-family: var(--mono); font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
+.staff-table { display: grid; margin-top: 18px; border-top: 1px solid var(--line); }
+.staff-row { display: grid; grid-template-columns: minmax(180px,1.45fr) 0.78fr 0.68fr auto; gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 10px; }
+.staff-row > div { display: grid; gap: 2px; }
+.staff-row b { font-size: 11px; }
+.staff-row small { color: var(--ink-soft); font-size: 9px; }
+.staff-head { color: var(--ink-soft); font-family: var(--mono); font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
 .verification { font-size: 8px; }
 .verification.verified { color: #245e47; border-color: #9dbba7; background: var(--green-pale); }
 .verification.suspended, .verification.rejected { color: #7d3e30; border-color: #d8b0a3; background: #f4dcd3; }
@@ -325,7 +342,7 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .availability-grid { grid-template-columns: repeat(2, 1fr); }
   .requester-grid, .donor-grid, .facility-grid, .admin-grid { grid-template-columns: 1fr; }
   .request-list-card, .inventory-side { position: static; max-height: none; overflow: visible; }
-  .admin-facilities, .admin-policies, .audit-card { grid-column: auto; }
+  .admin-facilities, .admin-policies, .admin-staff, .audit-card { grid-column: auto; }
   .facility-stats { grid-template-columns: repeat(2, 1fr); }
   .facility-stats article:nth-child(2) { border-right: 0; }
   .facility-stats article:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -368,6 +385,8 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .site-footer > span { text-align: left; }
   .auth-dialog { padding: 31px 22px; box-shadow: 9px 9px 0 var(--signal); }
   .access-role-grid, .auth-form, .account-form { grid-template-columns: 1fr; }
+  .mfa-setup { grid-template-columns: 1fr; justify-items: center; }
+  .mfa-setup div { width: 100%; }
   .auth-form .button { width: 100%; }
   .dashboard-shell { padding: 36px 0 60px; }
   .dashboard-heading { align-items: flex-start; flex-direction: column; }
@@ -383,7 +402,9 @@ sup { position: relative; top: -0.48em; margin-left: 1px; font-size: 0.43em; let
   .invite { align-items: flex-start; flex-direction: column; }
   .invite-actions { width: 100%; }
   .table-row { grid-template-columns: 1.2fr 0.8fr; gap: 8px; }
+  .staff-row { grid-template-columns: 1.15fr 0.85fr; gap: 8px; }
   .table-head { display: none; }
+  .staff-head { display: none; }
   .table-row > span, .table-row > strong { padding-left: 4px; }
 }
 

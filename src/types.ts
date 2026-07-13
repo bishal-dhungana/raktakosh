@@ -133,6 +133,7 @@ export interface FacilityDashboard {
 
 export interface AdminOverview {
   facilities: Array<{ id: number; name: string; district: string; status: string; publicAvailability: boolean; openRequests: number }>;
+  staff: Array<{ id: number; name: string; email: string; role: UserRole; facilityName: string | null; accountStatus: "active" | "suspended"; mfaEnabled: boolean }>;
   policies: Array<{ id: number; name: string; version: string; effectiveAt: string; summary: string }>;
   auditEvents: Array<{ id: number; action: string; entityType: string; entityId: string; actorName: string; createdAt: string }>;
 }

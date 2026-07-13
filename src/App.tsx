@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import { ApiError, api, toQuery } from "./api";
 import { t } from "./i18n";
 import type {
@@ -320,16 +321,66 @@ function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: 
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "requester", bloodGroup: "", rhFactor: "+", district: "Morang", outreachConsent: false });
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
+  const [mfaStage, setMfaStage] = useState<"credentials" | "enroll" | "verify">("credentials");
+  const [mfaChallengeToken, setMfaChallengeToken] = useState("");
+  const [mfaSecret, setMfaSecret] = useState("");
+  const [mfaQrCode, setMfaQrCode] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+
+  function finish(result: { user?: CurrentUser }) {
+    if (!result.user) throw new Error("Secure sign-in could not be completed.");
+    onLoggedIn(result.user);
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setWorking(true); setError("");
     try {
       const endpoint = mode === "signin" ? "/api/auth/login" : "/api/auth/register";
       const payload = mode === "signin" ? { email: form.email, password: form.password } : form;
-      const result = await api<{ user: CurrentUser }>(endpoint, { method: "POST", body: JSON.stringify(payload) });
-      onLoggedIn(result.user);
+      const result = await api<{ user?: CurrentUser; mfaRequired?: boolean; mfaEnrollmentRequired?: boolean; mfaChallengeToken?: string }>(endpoint, { method: "POST", body: JSON.stringify(payload) });
+      if (result.mfaRequired && result.mfaChallengeToken) {
+        setMfaChallengeToken(result.mfaChallengeToken); setMfaStage("verify"); return;
+      }
+      if (result.mfaEnrollmentRequired && result.mfaChallengeToken) {
+        setMfaChallengeToken(result.mfaChallengeToken);
+        const setup = await api<{ secret: string; otpauthUri: string }>("/api/auth/mfa/enroll/start", { method: "POST", body: JSON.stringify({ challengeToken: result.mfaChallengeToken }) });
+        setMfaSecret(setup.secret);
+        setMfaQrCode(await QRCode.toDataURL(setup.otpauthUri, { width: 220, margin: 1, errorCorrectionLevel: "M" }));
+        setMfaStage("enroll"); return;
+      }
+      finish(result);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to sign in."); }
     finally { setWorking(false); }
+  }
+
+  async function verifyMfa(event: FormEvent) {
+    event.preventDefault(); setWorking(true); setError("");
+    try {
+      const endpoint = mfaStage === "enroll" ? "/api/auth/mfa/enroll/confirm" : "/api/auth/mfa/verify";
+      const result = await api<{ user?: CurrentUser }>(endpoint, { method: "POST", body: JSON.stringify({ challengeToken: mfaChallengeToken, code: mfaCode }) });
+      finish(result);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "The authenticator code could not be verified."); }
+    finally { setWorking(false); }
+  }
+
+  if (mfaStage !== "credentials") {
+    const enrolling = mfaStage === "enroll";
+    return (
+      <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+        <section className="auth-dialog mfa-dialog" role="dialog" aria-modal="true" aria-labelledby="mfa-title" onMouseDown={(event) => event.stopPropagation()}>
+          <button className="dialog-close" onClick={onClose} aria-label="Close sign in">×</button>
+          <Pill className="access-pill">MULTI-FACTOR SECURITY</Pill>
+          <h2 id="mfa-title">{enrolling ? "Protect this staff account." : "Confirm your secure sign-in."}</h2>
+          {enrolling ? <><p>Scan this code with Google Authenticator, Microsoft Authenticator, Authy, or another TOTP authenticator. Save the key only in your authenticator; it is shown once.</p><div className="mfa-setup"><img src={mfaQrCode} alt="Authenticator setup QR code" /><div><span>Manual setup key</span><code>{mfaSecret}</code><small>Time-based · 6 digits · 30 seconds</small></div></div></> : <p>Open your authenticator app and enter the current six-digit code to continue.</p>}
+          <form className="auth-form mfa-form" onSubmit={verifyMfa}>
+            <label><span>Authenticator code</span><input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, ""))} required autoFocus /></label>
+            {error && <Notice tone="warning">{error}</Notice>}
+            <button className="button button-signal" type="submit" disabled={working}>{working ? "Verifying…" : enrolling ? "Enable multi-factor security" : "Verify and sign in"}</button>
+          </form>
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -343,7 +394,8 @@ function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: 
         <form className="auth-form account-form" onSubmit={submit}>
           {mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
           <label><span>Email address</span><input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required autoComplete="email" /></label>
-          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={mode === "register" ? 10 : undefined} required autoComplete={mode === "signin" ? "current-password" : "new-password"} /></label>
+          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={mode === "register" ? 12 : undefined} required autoComplete={mode === "signin" ? "current-password" : "new-password"} /></label>
+          {mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
           {mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
         {error && <Notice tone="warning">{error}</Notice>}
           <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
@@ -532,11 +584,20 @@ function FacilityWorkspace({ user, locale, onMessage }: { user: CurrentUser; loc
 
 function AdminDashboard({ locale, onMessage }: { locale: Locale; onMessage: (message: string) => void }) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
-  useEffect(() => { void api<{ overview: AdminOverview }>("/api/admin/overview").then((data) => setOverview(data.overview)).catch((error) => onMessage(error instanceof Error ? error.message : "Could not load governance data.")); }, []);
+  async function load() {
+    try { setOverview((await api<{ overview: AdminOverview }>("/api/admin/overview")).overview); }
+    catch (error) { onMessage(error instanceof Error ? error.message : "Could not load governance data."); }
+  }
+  useEffect(() => { void load(); }, []);
+  async function changeStaffStatus(id: number, accountStatus: "active" | "suspended") {
+    try { await api(`/api/admin/staff/${id}/status`, { method: "PATCH", body: JSON.stringify({ accountStatus }) }); onMessage(`Staff account ${accountStatus}. Active sessions were revoked when applicable.`); await load(); }
+    catch (error) { onMessage(error instanceof Error ? error.message : "Staff access could not be updated."); }
+  }
   if (!overview) return <div className="loader">Loading governance overview…</div>;
   return <div className="admin-grid">
     <Card className="admin-facilities"><div className="card-eyebrow">FACILITY VERIFICATION</div><h2>Public visibility begins with a verified operating partner.</h2><div className="facility-table"><div className="table-row table-head"><span>Facility</span><span>Status</span><span>Public</span><span>Open requests</span></div>{overview.facilities.map((facility) => <div className="table-row" key={facility.id}><div><b>{facility.name}</b><small>{facility.district}</small></div><Pill className={`verification ${facility.status}`}>{facility.status}</Pill><span>{facility.publicAvailability ? "Enabled" : "Hidden"}</span><strong>{facility.openRequests}</strong></div>)}</div></Card>
     <Card className="admin-policies"><div className="card-eyebrow">PUBLISHED POLICY</div><h2>Visible rules; no hidden medical automation.</h2>{overview.policies.map((policy) => <article className="policy-row" key={policy.id}><div><Pill>{policy.version}</Pill><h3>{policy.name}</h3></div><p>{policy.summary}</p><small>Effective {formatDate(policy.effectiveAt, locale, false)}</small></article>)}</Card>
+    <Card className="admin-staff"><div className="card-eyebrow">STAFF ACCESS SECURITY</div><h2>Protect facility and platform access.</h2><div className="staff-table"><div className="staff-row staff-head"><span>Staff member</span><span>MFA</span><span>State</span><span>Action</span></div>{overview.staff.map((member) => <div className="staff-row" key={member.id}><div><b>{member.name}</b><small>{member.role.replaceAll("_", " ")} · {member.facilityName || "Platform"}</small></div><Pill className={member.mfaEnabled ? "verification verified" : "verification suspended"}>{member.mfaEnabled ? "MFA enabled" : "MFA required"}</Pill><Pill className={`verification ${member.accountStatus === "active" ? "verified" : "suspended"}`}>{member.accountStatus}</Pill><button className="text-button danger-text" disabled={member.accountStatus === "suspended"} onClick={() => void changeStaffStatus(member.id, "suspended")}>Suspend</button></div>)}</div></Card>
     <Card className="audit-card"><div className="card-eyebrow">AUDIT FEED</div><h2>High-signal operating history.</h2><ol className="audit-feed">{overview.auditEvents.map((event) => <li key={event.id}><span className="audit-node" /><div><b>{event.action.replaceAll("_", " ")}</b><p>{event.actorName} · {event.entityType} #{event.entityId}</p><small>{formatDate(event.createdAt, locale)}</small></div></li>)}</ol></Card>
   </div>;
 }

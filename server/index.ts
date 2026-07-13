@@ -24,23 +24,33 @@ import type {
 import {
   SESSION_HOURS,
   STALE_AFTER_HOURS,
+  consumeAuthChallenge,
+  createAuthChallenge,
   createNotification,
   createSession,
   deleteSession,
+  deleteUserSessions,
   execute,
+  getAuthChallenge,
+  getAuthUserByEmail,
+  getAuthUserById,
   getCurrentUser,
   getPool,
-  getUserByEmail,
   hashDocument,
   hashPassword,
   initializeDatabase,
   one,
   query,
+  setMfaSecret,
+  csrfTokenFor,
   transaction,
+  enableMfa,
+  verifyCsrfToken,
   verifyPassword,
   writeAudit
 } from "./db";
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
+import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8787);
@@ -51,6 +61,10 @@ const validRh = new Set(["+", "-"]);
 const validComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma"]);
 const facilityRoles = new Set<UserRole>(["inventory_manager", "reviewer", "facility_admin"]);
 const localOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
+const sessionCookieName = "__Host-rk_session";
+// Local disk is only acceptable for a developer workstation. Production uploads stay disabled
+// until a private object-storage adapter and malware-scanning pipeline are configured.
+const documentStorageEnabled = !isProduction;
 const uploadsDirectory = join(process.cwd(), "storage", "uploads");
 mkdirSync(uploadsDirectory, { recursive: true });
 
@@ -105,19 +119,25 @@ function cookieOptions() {
     httpOnly: true,
     sameSite: (isProduction ? "none" : "lax") as "none" | "lax",
     secure: isProduction,
+    partitioned: isProduction,
     maxAge: SESSION_HOURS * 60 * 60 * 1000,
     path: "/"
   };
 }
 
 function allowedOrigins(): Set<string> {
-  const origins = new Set(localOrigins);
+  const origins = new Set<string>();
+  if (!isProduction) localOrigins.forEach((origin) => origins.add(origin));
   if (frontendOrigin) origins.add(frontendOrigin);
   return origins;
 }
 
 function getToken(req: Request): string | undefined {
-  return typeof req.cookies?.rk_session === "string" ? req.cookies.rk_session : undefined;
+  return typeof req.cookies?.[sessionCookieName] === "string" ? req.cookies[sessionCookieName] : undefined;
+}
+
+function requiresMfa(role: UserRole): boolean {
+  return role === "platform_admin" || facilityRoles.has(role);
 }
 
 async function hasVerifiedFacility(viewer: CurrentUser): Promise<boolean> {
@@ -237,6 +257,14 @@ async function requireAuth(req: AuthRequest, res: Response, next: NextFunction):
   }
 }
 
+function requireCsrf(req: AuthRequest, res: Response, next: NextFunction): void {
+  const token = getToken(req);
+  if (!token || !verifyCsrfToken(token, req.header("X-RK-CSRF"))) {
+    return apiError(res, 403, "Your security session has expired. Please sign in again.");
+  }
+  next();
+}
+
 function requireRoles(...roles: UserRole[]) {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.viewer || !roles.includes(req.viewer.role)) return apiError(res, 403, "You do not have access to this action.");
@@ -265,12 +293,11 @@ app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins().has(origin)) return callback(null, true);
-    callback(new Error("Origin is not permitted."));
+    callback(null, !origin || allowedOrigins().has(origin));
   },
   credentials: true,
   methods: ["GET", "POST", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type"]
+  allowedHeaders: ["Content-Type", "X-RK-CSRF"]
 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
@@ -294,10 +321,10 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
     const phone = text(req.body?.phone, 40);
     const password = text(req.body?.password, 200);
     const role = text(req.body?.role, 30) as "requester" | "donor";
-    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || password.length < 10 || !["requester", "donor"].includes(role)) {
-      return apiError(res, 400, "Enter a valid name, email, phone, account type, and password of at least 10 characters.");
+    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || password.length < 12 || !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])/.test(password) || !["requester", "donor"].includes(role)) {
+      return apiError(res, 400, "Enter a valid name, email, phone, account type, and a password of at least 12 characters with upper-case, lower-case, number, and symbol.");
     }
-    const existing = await getUserByEmail(email);
+    const existing = await getAuthUserByEmail(email);
     if (existing) return apiError(res, 409, "An account already exists for this email address.");
     const createdAt = new Date().toISOString();
     const userId = await transaction(async (connection) => {
@@ -319,11 +346,11 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
       }
       return insertedId;
     });
-    const token = await createSession(userId);
-    const user = await getCurrentUser(token);
+    const session = await createSession(userId);
+    const user = await getCurrentUser(session.token);
     await writeAudit(userId, "account_registered", "user", userId, { role, source: clientIp(req) });
-    res.cookie("rk_session", token, cookieOptions());
-    res.status(201).json({ user });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.status(201).json({ user, csrfToken: session.csrfToken });
   } catch (error) { next(error); }
 });
 
@@ -332,24 +359,74 @@ app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
     const email = text(req.body?.email, 190).toLowerCase();
     const password = text(req.body?.password, 200);
     if (!email || !password) return apiError(res, 400, "Email and password are required.");
-    const user = await getUserByEmail(email);
-    if (!user || !verifyPassword(password, user.passwordHash)) {
+    const user = await getAuthUserByEmail(email);
+    if (!user || user.accountStatus !== "active" || !verifyPassword(password, user.passwordHash)) {
       await writeAudit(null, "login_denied", "account", email, { source: clientIp(req) });
       return apiError(res, 401, "The email or password is not correct.");
     }
-    const token = await createSession(user.id);
-    const viewer = await getCurrentUser(token);
+    if (requiresMfa(user.role)) {
+      const purpose = user.mfaEnabledAt && user.mfaSecretEncrypted ? "mfa_verify" : "mfa_enroll";
+      const challengeToken = await createAuthChallenge(user.id, purpose);
+      return res.json({ mfaRequired: purpose === "mfa_verify", mfaEnrollmentRequired: purpose === "mfa_enroll", mfaChallengeToken: challengeToken });
+    }
+    const session = await createSession(user.id);
+    const viewer = await getCurrentUser(session.token);
     await writeAudit(user.id, "login_succeeded", "account", user.id, { source: clientIp(req) });
-    res.cookie("rk_session", token, cookieOptions());
-    res.json({ user: viewer });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.json({ user: viewer, csrfToken: session.csrfToken });
   } catch (error) { next(error); }
 });
 
-app.post("/api/auth/logout", async (req, res, next) => {
+app.post("/api/auth/mfa/enroll/start", authRateLimit, async (req, res, next) => {
+  try {
+    const challengeToken = text(req.body?.challengeToken, 128);
+    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "mfa_enroll") : undefined;
+    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
+    if (!challenge || !user || user.accountStatus !== "active" || !requiresMfa(user.role)) return apiError(res, 401, "The secure sign-in step has expired. Start again.");
+    const secret = generateTotpSecret();
+    await setMfaSecret(user.id, encryptMfaSecret(secret));
+    res.json({ secret, otpauthUri: totpUri(user.email, secret) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/enroll/confirm", authRateLimit, async (req, res, next) => {
+  try {
+    const challengeToken = text(req.body?.challengeToken, 128);
+    const code = text(req.body?.code, 8);
+    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "mfa_enroll") : undefined;
+    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
+    if (!challenge || !user || !user.mfaSecretEncrypted || !verifyTotp(decryptMfaSecret(user.mfaSecretEncrypted), code)) return apiError(res, 401, "The authenticator code is not correct or has expired.");
+    await enableMfa(user.id);
+    await consumeAuthChallenge(challengeToken);
+    const session = await createSession(user.id);
+    const viewer = await getCurrentUser(session.token);
+    await writeAudit(user.id, "mfa_enrolled", "account", user.id, { source: clientIp(req) });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.json({ user: viewer, csrfToken: session.csrfToken });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/verify", authRateLimit, async (req, res, next) => {
+  try {
+    const challengeToken = text(req.body?.challengeToken, 128);
+    const code = text(req.body?.code, 8);
+    const challenge = challengeToken ? await getAuthChallenge(challengeToken, "mfa_verify") : undefined;
+    const user = challenge ? await getAuthUserById(challenge.userId) : undefined;
+    if (!challenge || !user || !user.mfaSecretEncrypted || !user.mfaEnabledAt || !verifyTotp(decryptMfaSecret(user.mfaSecretEncrypted), code)) return apiError(res, 401, "The authenticator code is not correct or has expired.");
+    await consumeAuthChallenge(challengeToken);
+    const session = await createSession(user.id);
+    const viewer = await getCurrentUser(session.token);
+    await writeAudit(user.id, "mfa_verified", "account", user.id, { source: clientIp(req) });
+    res.cookie(sessionCookieName, session.token, cookieOptions());
+    res.json({ user: viewer, csrfToken: session.csrfToken });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/logout", requireAuth, requireCsrf, async (req: AuthRequest, res, next) => {
   try {
     const token = getToken(req);
     if (token) await deleteSession(token);
-    res.clearCookie("rk_session", cookieOptions());
+    res.clearCookie(sessionCookieName, cookieOptions());
     res.status(204).end();
   } catch (error) { next(error); }
 });
@@ -358,7 +435,9 @@ app.get("/api/auth/me", async (req, res, next) => {
   try {
     // A visitor without a session is a normal public state, not an API error.
     // Returning `null` avoids an expected 401 in browser consoles on the landing page.
-    res.json({ user: await getCurrentUser(getToken(req)) });
+    const token = getToken(req);
+    const user = await getCurrentUser(token);
+    res.json({ user, ...(user && token ? { csrfToken: csrfTokenFor(token) } : {}) });
   } catch (error) { next(error); }
 });
 
@@ -415,7 +494,7 @@ app.get("/api/requests", requireAuth, async (req: AuthRequest, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/requests", requireAuth, requireRoles("requester", "donor"), writeRateLimit, async (req: AuthRequest, res, next) => {
+app.post("/api/requests", requireAuth, requireCsrf, requireRoles("requester", "donor"), writeRateLimit, async (req: AuthRequest, res, next) => {
   try {
     const viewer = req.viewer!;
     const facilityId = positiveInteger(req.body?.facilityId);
@@ -462,8 +541,9 @@ const upload = multer({
   fileFilter: (_req, file, callback) => callback(null, new Set(["application/pdf", "image/jpeg", "image/png"]).has(file.mimetype))
 });
 
-app.post("/api/requests/:id/document", requireAuth, upload.single("document"), async (req: AuthRequest, res, next) => {
+app.post("/api/requests/:id/document", requireAuth, requireCsrf, upload.single("document"), async (req: AuthRequest, res, next) => {
   try {
+    if (!documentStorageEnabled) return apiError(res, 503, "Supporting document upload is unavailable until private object storage and malware scanning are configured.");
     const requestId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
     if (!requestId) return apiError(res, 400, "Invalid request identifier.");
@@ -484,7 +564,7 @@ app.post("/api/requests/:id/document", requireAuth, upload.single("document"), a
   } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/status", requireAuth, requireRoles("reviewer", "facility_admin", "platform_admin"), async (req: AuthRequest, res, next) => {
+app.post("/api/requests/:id/status", requireAuth, requireCsrf, requireRoles("reviewer", "facility_admin", "platform_admin"), async (req: AuthRequest, res, next) => {
   try {
     const requestId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
@@ -505,7 +585,7 @@ app.post("/api/requests/:id/status", requireAuth, requireRoles("reviewer", "faci
   } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/notes", requireAuth, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+app.post("/api/requests/:id/notes", requireAuth, requireCsrf, requireVerifiedFacility, async (req: AuthRequest, res, next) => {
   try {
     const requestId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
@@ -520,7 +600,7 @@ app.post("/api/requests/:id/notes", requireAuth, requireVerifiedFacility, async 
   } catch (error) { next(error); }
 });
 
-app.post("/api/requests/:id/outreach", requireAuth, requireRoles("reviewer", "facility_admin"), async (req: AuthRequest, res, next) => {
+app.post("/api/requests/:id/outreach", requireAuth, requireCsrf, requireRoles("reviewer", "facility_admin"), async (req: AuthRequest, res, next) => {
   try {
     const requestId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
@@ -573,7 +653,7 @@ app.get("/api/inventory", requireAuth, requireVerifiedFacility, async (req: Auth
   } catch (error) { next(error); }
 });
 
-app.post("/api/inventory", requireAuth, requireRoles("inventory_manager", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
+app.post("/api/inventory", requireAuth, requireCsrf, requireRoles("inventory_manager", "facility_admin"), requireVerifiedFacility, async (req: AuthRequest, res, next) => {
   try {
     const viewer = req.viewer!;
     const bloodGroup = text(req.body?.bloodGroup, 4);
@@ -624,7 +704,7 @@ app.get("/api/donor/profile", requireAuth, requireRoles("donor"), async (req: Au
   } catch (error) { next(error); }
 });
 
-app.patch("/api/donor/profile", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+app.patch("/api/donor/profile", requireAuth, requireCsrf, requireRoles("donor"), async (req: AuthRequest, res, next) => {
   try {
     const viewer = req.viewer!;
     const availability = text(req.body?.availability, 50);
@@ -656,7 +736,7 @@ app.get("/api/donor/invitations", requireAuth, requireRoles("donor"), async (req
   } catch (error) { next(error); }
 });
 
-app.post("/api/donor/invitations/:id/respond", requireAuth, requireRoles("donor"), async (req: AuthRequest, res, next) => {
+app.post("/api/donor/invitations/:id/respond", requireAuth, requireCsrf, requireRoles("donor"), async (req: AuthRequest, res, next) => {
   try {
     const recipientId = positiveInteger(req.params.id);
     const viewer = req.viewer!;
@@ -710,7 +790,29 @@ app.get("/api/admin/overview", requireAuth, requireRoles("platform_admin"), asyn
       `SELECT a.id, a.action, a.entity_type as entityType, a.entity_id as entityId, COALESCE(u.name, 'System') as actorName, a.created_at as createdAt
        FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id ORDER BY a.created_at DESC, a.id DESC LIMIT 20`
     );
-    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents } satisfies AdminOverview });
+    const staff = await query<Omit<AdminOverview["staff"][number], "mfaEnabled"> & { mfaEnabled: number }>(
+      `SELECT u.id, u.name, u.email, u.role, u.account_status as accountStatus, f.name as facilityName,
+              CASE WHEN u.mfa_enabled_at IS NULL THEN 0 ELSE 1 END as mfaEnabled
+       FROM users u LEFT JOIN facilities f ON f.id = u.facility_id
+       WHERE u.role IN ('platform_admin', 'facility_admin', 'reviewer', 'inventory_manager')
+       ORDER BY u.role, u.name`
+    );
+    res.json({ overview: { facilities: facilities.map((facility) => ({ ...facility, publicAvailability: Boolean(facility.publicAvailability), openRequests: Number(facility.openRequests) })), policies, auditEvents, staff: staff.map((member) => ({ ...member, mfaEnabled: Boolean(member.mfaEnabled) })) } satisfies AdminOverview });
+  } catch (error) { next(error); }
+});
+
+app.patch("/api/admin/staff/:id/status", requireAuth, requireCsrf, requireRoles("platform_admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const staffId = positiveInteger(req.params.id);
+    const accountStatus = text(req.body?.accountStatus, 20);
+    if (!staffId || !["active", "suspended"].includes(accountStatus)) return apiError(res, 400, "Choose an active or suspended account state.");
+    if (staffId === req.viewer!.id) return apiError(res, 400, "You cannot change your own administrator access from this session.");
+    const staff = await getAuthUserById(staffId);
+    if (!staff || !requiresMfa(staff.role)) return apiError(res, 404, "Staff account not found.");
+    await execute("UPDATE users SET account_status = ? WHERE id = ?", [accountStatus, staffId]);
+    if (accountStatus === "suspended") await deleteUserSessions(staffId);
+    await writeAudit(req.viewer!.id, "staff_account_status_changed", "user", staffId, { accountStatus });
+    res.json({ ok: true });
   } catch (error) { next(error); }
 });
 
@@ -742,7 +844,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 async function start(): Promise<void> {
   if (isProduction && !frontendOrigin) throw new Error("FRONTEND_ORIGIN must be configured in production.");
-  await initializeDatabase();
+  if (process.env.AUTO_MIGRATE === "true") await initializeDatabase();
   await getPool().query("SELECT 1");
   app.listen(PORT, () => console.log(`Raktakosh API listening on port ${PORT}`));
 }

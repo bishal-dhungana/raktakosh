@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import mysql, { type Pool, type PoolConnection, type ResultSetHeader } from "mysql2/promise";
 import type { CurrentUser, UserRole } from "../src/types";
 
@@ -11,6 +11,17 @@ function requiredEnvironment(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} must be configured before the API can start.`);
   return value;
+}
+
+function requiredRuntimeSecret(name: string): string {
+  const value = process.env[name]?.trim();
+  if (value) return value;
+  if (process.env.NODE_ENV === "production") throw new Error(`${name} must be configured before the API can start.`);
+  return `development-only-${name}`;
+}
+
+function opaqueHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function buildPool(): Pool {
@@ -83,6 +94,21 @@ export function hashPassword(password: string): string {
   return `${salt}:${hash}`;
 }
 
+export interface AuthUser {
+  id: number;
+  email: string;
+  passwordHash: string;
+  role: UserRole;
+  accountStatus: "active" | "suspended";
+  mfaSecretEncrypted: string | null;
+  mfaEnabledAt: string | null;
+}
+
+export interface AuthChallenge {
+  userId: number;
+  purpose: "mfa_enroll" | "mfa_verify";
+}
+
 export function verifyPassword(password: string, stored: string): boolean {
   const [salt, hash] = stored.split(":");
   if (!salt || !hash) return false;
@@ -105,22 +131,74 @@ export async function createNotification(userId: number, category: string, title
   );
 }
 
-export async function createSession(userId: number): Promise<string> {
+export async function createSession(userId: number): Promise<{ token: string; csrfToken: string }> {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
-  await execute("INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)", [token, userId, expiresAt, now()]);
-  return token;
+  await execute("INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)", [opaqueHash(token), userId, expiresAt, now()]);
+  return { token, csrfToken: csrfTokenFor(token) };
 }
 
 export async function deleteSession(token: string): Promise<void> {
-  await execute("DELETE FROM sessions WHERE token = ?", [token]);
+  await execute("DELETE FROM sessions WHERE token = ?", [opaqueHash(token)]);
 }
 
-export async function getUserByEmail(email: string): Promise<{ id: number; passwordHash: string } | undefined> {
-  return one<{ id: number; passwordHash: string }>(
-    "SELECT id, password_hash as passwordHash FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1",
+export async function deleteUserSessions(userId: number): Promise<void> {
+  await execute("DELETE FROM sessions WHERE user_id = ?", [userId]);
+}
+
+export function csrfTokenFor(token: string): string {
+  return createHmac("sha256", requiredRuntimeSecret("CSRF_SECRET")).update(token).digest("base64url");
+}
+
+export function verifyCsrfToken(token: string, submittedToken: string | undefined): boolean {
+  if (!submittedToken) return false;
+  const expected = Buffer.from(csrfTokenFor(token));
+  const received = Buffer.from(submittedToken);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+export async function getAuthUserByEmail(email: string): Promise<AuthUser | undefined> {
+  return one<AuthUser>(
+    `SELECT id, email, password_hash as passwordHash, role, account_status as accountStatus,
+            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt
+     FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`,
     [email]
   );
+}
+
+export async function getAuthUserById(id: number): Promise<AuthUser | undefined> {
+  return one<AuthUser>(
+    `SELECT id, email, password_hash as passwordHash, role, account_status as accountStatus,
+            mfa_secret_encrypted as mfaSecretEncrypted, mfa_enabled_at as mfaEnabledAt
+     FROM users WHERE id = ? LIMIT 1`,
+    [id]
+  );
+}
+
+export async function createAuthChallenge(userId: number, purpose: AuthChallenge["purpose"]): Promise<string> {
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await execute("INSERT INTO auth_challenges (token_hash, user_id, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?)", [opaqueHash(token), userId, purpose, expiresAt, now()]);
+  return token;
+}
+
+export async function getAuthChallenge(token: string, purpose: AuthChallenge["purpose"]): Promise<AuthChallenge | undefined> {
+  return one<AuthChallenge>(
+    "SELECT user_id as userId, purpose FROM auth_challenges WHERE token_hash = ? AND purpose = ? AND expires_at > ? LIMIT 1",
+    [opaqueHash(token), purpose, now()]
+  );
+}
+
+export async function consumeAuthChallenge(token: string): Promise<void> {
+  await execute("DELETE FROM auth_challenges WHERE token_hash = ?", [opaqueHash(token)]);
+}
+
+export async function setMfaSecret(userId: number, encryptedSecret: string): Promise<void> {
+  await execute("UPDATE users SET mfa_secret_encrypted = ?, mfa_enabled_at = NULL WHERE id = ?", [encryptedSecret, userId]);
+}
+
+export async function enableMfa(userId: number): Promise<void> {
+  await execute("UPDATE users SET mfa_enabled_at = ? WHERE id = ?", [now(), userId]);
 }
 
 export async function getCurrentUser(token: string | undefined): Promise<CurrentUser | null> {
@@ -130,8 +208,8 @@ export async function getCurrentUser(token: string | undefined): Promise<Current
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN facilities f ON f.id = u.facility_id
-     WHERE s.token = ? AND s.expires_at > ? LIMIT 1`,
-    [token, now()]
+     WHERE s.token = ? AND s.expires_at > ? AND u.account_status = 'active' LIMIT 1`,
+    [opaqueHash(token), now()]
   );
   return row ?? null;
 }
@@ -162,6 +240,9 @@ const schema = [
     facility_id BIGINT UNSIGNED NULL,
     password_hash VARCHAR(255) NOT NULL,
     verified_at VARCHAR(40) NULL,
+    account_status VARCHAR(20) NOT NULL DEFAULT 'active',
+    mfa_secret_encrypted TEXT NULL,
+    mfa_enabled_at VARCHAR(40) NULL,
     created_at VARCHAR(40) NOT NULL,
     UNIQUE KEY uq_users_email (email),
     KEY idx_users_facility_role (facility_id, role),
@@ -176,6 +257,17 @@ const schema = [
     UNIQUE KEY uq_sessions_token (token),
     KEY idx_sessions_expiry (expires_at),
     CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS auth_challenges (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    token_hash VARCHAR(128) NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    purpose VARCHAR(40) NOT NULL,
+    expires_at VARCHAR(40) NOT NULL,
+    created_at VARCHAR(40) NOT NULL,
+    UNIQUE KEY uq_auth_challenge_token (token_hash),
+    KEY idx_auth_challenge_expiry (expires_at),
+    CONSTRAINT fk_auth_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS inventory_records (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -394,6 +486,7 @@ async function seedReferenceData(): Promise<void> {
 }
 
 async function bootstrapStaff(): Promise<void> {
+  if (process.env.BOOTSTRAP_STAFF !== "true") return;
   const morang = await one<{ id: number }>("SELECT id FROM facilities WHERE name = ? LIMIT 1", ["Morang Community Blood Centre"]);
   if (!morang) return;
   const entries: Array<{ role: UserRole; name: string; email?: string; password?: string; facilityId: number | null }> = [
@@ -413,8 +506,54 @@ async function bootstrapStaff(): Promise<void> {
 
 export async function initializeDatabase(): Promise<void> {
   for (const statement of schema) await execute(statement);
+  await applySecurityMigrations();
   await seedReferenceData();
   await bootstrapStaff();
+}
+
+async function columnExists(table: string, column: string): Promise<boolean> {
+  const result = await one<{ count: number }>(
+    "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+    [table, column]
+  );
+  return Number(result?.count ?? 0) > 0;
+}
+
+async function applySecurityMigrations(): Promise<void> {
+  await execute(
+    `CREATE TABLE IF NOT EXISTS schema_migrations (
+      id VARCHAR(120) PRIMARY KEY,
+      applied_at VARCHAR(40) NOT NULL
+    )`
+  );
+  const migrationId = "2026-07-13-security-session-hashing-and-mfa";
+  const alreadyApplied = await one<{ id: string }>("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", [migrationId]);
+  if (alreadyApplied) return;
+  if (!(await columnExists("users", "account_status"))) {
+    await execute("ALTER TABLE users ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active' AFTER verified_at");
+  }
+  if (!(await columnExists("users", "mfa_secret_encrypted"))) {
+    await execute("ALTER TABLE users ADD COLUMN mfa_secret_encrypted TEXT NULL AFTER account_status");
+  }
+  if (!(await columnExists("users", "mfa_enabled_at"))) {
+    await execute("ALTER TABLE users ADD COLUMN mfa_enabled_at VARCHAR(40) NULL AFTER mfa_secret_encrypted");
+  }
+  await execute(
+    `CREATE TABLE IF NOT EXISTS auth_challenges (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      token_hash VARCHAR(128) NOT NULL,
+      user_id BIGINT UNSIGNED NOT NULL,
+      purpose VARCHAR(40) NOT NULL,
+      expires_at VARCHAR(40) NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      UNIQUE KEY uq_auth_challenge_token (token_hash),
+      KEY idx_auth_challenge_expiry (expires_at),
+      CONSTRAINT fk_auth_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`
+  );
+  // Earlier releases stored raw session tokens. Invalidate them once so only hashes remain after migration.
+  await execute("DELETE FROM sessions");
+  await execute("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)", [migrationId, now()]);
 }
 
 export function hashDocument(buffer: Buffer): string {
