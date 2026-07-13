@@ -149,7 +149,7 @@ function App() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [view, setView] = useState<"home" | "dashboard">("home");
   const [authOpen, setAuthOpen] = useState(false);
-  const [authAudience, setAuthAudience] = useState<"personal" | "blood_bank">("personal");
+  const [bloodBankAuthOpen, setBloodBankAuthOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [availability, setAvailability] = useState<PublicAvailability[]>([]);
   const [searching, setSearching] = useState(true);
@@ -186,7 +186,6 @@ function App() {
       setView("dashboard");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
-      setAuthAudience("personal");
       setAuthOpen(true);
     }
   }
@@ -213,8 +212,8 @@ function App() {
             </>
           ) : (
             <>
-              <button className="button button-quiet" onClick={() => { setAuthAudience("blood_bank"); setAuthOpen(true); }}>Blood Bank login</button>
-              <button className="button button-ink" onClick={() => { setAuthAudience("personal"); setAuthOpen(true); }}>{t(locale, "signIn")}</button>
+              <button className="button button-quiet" onClick={() => setBloodBankAuthOpen(true)}>Blood Bank portal</button>
+              <button className="button button-ink" onClick={() => setAuthOpen(true)}>{t(locale, "signIn")}</button>
             </>
           )}
         </div>
@@ -232,7 +231,7 @@ function App() {
             searching={searching}
             onSearch={() => void loadAvailability()}
             onRequest={startRequest}
-            onExplore={() => { setAuthAudience("personal"); setAuthOpen(true); }}
+            onExplore={() => setAuthOpen(true)}
           />
         ) : user ? (
           <Dashboard user={user} locale={locale} onMessage={setNotice} onReturnHome={() => setView("home")} />
@@ -245,7 +244,8 @@ function App() {
         <span>Asia/Kathmandu · Version 1.0</span>
       </footer>
 
-      {authOpen && <AuthDialog locale={locale} initialAudience={authAudience} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
+      {authOpen && <AuthDialog locale={locale} initialAudience="personal" onOpenBloodBankLogin={() => { setAuthOpen(false); setBloodBankAuthOpen(true); }} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
+      {bloodBankAuthOpen && <AuthDialog locale={locale} initialAudience="blood_bank" onClose={() => setBloodBankAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setBloodBankAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s Blood Bank Dashboard is ready.`); }} />}
     </div>
   );
 }
@@ -361,9 +361,9 @@ function AvailabilityCard({ item, locale }: { item: PublicAvailability; locale: 
   );
 }
 
-function AuthDialog({ locale, initialAudience, onClose, onLoggedIn }: { locale: Locale; initialAudience: "personal" | "blood_bank"; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
+function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, onLoggedIn }: { locale: Locale; initialAudience: "personal" | "blood_bank"; onOpenBloodBankLogin?: () => void; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
   const [mode, setMode] = useState<"signin" | "register">("signin");
-  const [audience, setAudience] = useState<"personal" | "blood_bank">(initialAudience);
+  const isBloodBankStaff = initialAudience === "blood_bank";
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "requester", bloodGroup: "", rhFactor: "+", district: "", dateOfBirth: "", outreachConsent: false });
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
@@ -382,7 +382,7 @@ function AuthDialog({ locale, initialAudience, onClose, onLoggedIn }: { locale: 
     event.preventDefault();
     setWorking(true); setError("");
     try {
-      const endpoint = audience === "blood_bank" ? "/api/auth/blood-bank/login" : mode === "signin" ? "/api/auth/login" : "/api/auth/register";
+      const endpoint = isBloodBankStaff ? "/api/auth/blood-bank/login" : mode === "signin" ? "/api/auth/login" : "/api/auth/register";
       const payload = mode === "signin" ? { email: form.email, password: form.password } : form;
       const result = await api<{ user?: CurrentUser; mfaRequired?: boolean; mfaEnrollmentRequired?: boolean; mfaChallengeToken?: string }>(endpoint, { method: "POST", body: JSON.stringify(payload) });
       if (result.mfaRequired && result.mfaChallengeToken) {
@@ -433,19 +433,19 @@ function AuthDialog({ locale, initialAudience, onClose, onLoggedIn }: { locale: 
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title" onMouseDown={(event) => event.stopPropagation()}>
         <button className="dialog-close" onClick={onClose} aria-label="Close sign in">×</button>
-        <Pill className="access-pill">{audience === "blood_bank" ? "BLOOD BANK STAFF ACCESS" : "SECURE ACCOUNT ACCESS"}</Pill>
-        <h2 id="auth-title">{audience === "blood_bank" ? "Blood Bank staff sign-in." : mode === "signin" ? "Welcome back." : "Create your account."}</h2>
-        <p>{audience === "blood_bank" ? "Use the staff account issued to you by the Blood Bank or platform administrator. Staff sign-in requires multi-factor authentication." : mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Blood Bank staff accounts are provisioned by an authorized administrator."}</p>
-        <div className="auth-mode-switch" role="tablist" aria-label="Account audience"><button className={audience === "personal" ? "active" : ""} onClick={() => { setAudience("personal"); setMode("signin"); setError(""); }} role="tab" aria-selected={audience === "personal"}>Personal account</button><button className={audience === "blood_bank" ? "active" : ""} onClick={() => { setAudience("blood_bank"); setMode("signin"); setError(""); }} role="tab" aria-selected={audience === "blood_bank"}>Blood Bank staff</button></div>
-        {audience === "personal" && <div className="auth-mode-switch" role="tablist" aria-label="Personal account access mode"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }} role="tab" aria-selected={mode === "signin"}>Sign in</button><button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }} role="tab" aria-selected={mode === "register"}>Create account</button></div>}
+        <Pill className="access-pill">{isBloodBankStaff ? "BLOOD BANK STAFF ACCESS" : "SECURE ACCOUNT ACCESS"}</Pill>
+        <h2 id="auth-title">{isBloodBankStaff ? "Blood Bank portal." : mode === "signin" ? "Welcome back." : "Create your account."}</h2>
+        <p>{isBloodBankStaff ? "Enter the email and password issued for your Blood Bank staff account. Multi-factor verification is required after this step." : mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Blood Bank staff accounts are provisioned by an authorized administrator."}</p>
+        {!isBloodBankStaff && <div className="auth-mode-switch" role="tablist" aria-label="Personal account access mode"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }} role="tab" aria-selected={mode === "signin"}>Sign in</button><button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }} role="tab" aria-selected={mode === "register"}>Create account</button></div>}
         <form className="auth-form account-form" onSubmit={submit}>
-          {audience === "personal" && mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
+          {!isBloodBankStaff && mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
           <label><span>Email address</span><input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required autoComplete="email" /></label>
-          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={audience === "personal" && mode === "register" ? 12 : undefined} required autoComplete={audience === "blood_bank" || mode === "signin" ? "current-password" : "new-password"} /></label>
-          {audience === "personal" && mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
-          {audience === "personal" && mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label><span>Date of birth</span><input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} max={new Date().toISOString().slice(0, 10)} required /></label><small className="password-guidance full-field">Your date of birth is kept private and used to derive your age. A blood-centre clinician makes the final donation-eligibility decision.</small><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
+          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={!isBloodBankStaff && mode === "register" ? 12 : undefined} required autoComplete={isBloodBankStaff || mode === "signin" ? "current-password" : "new-password"} /></label>
+          {!isBloodBankStaff && mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
+          {!isBloodBankStaff && mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label><span>Date of birth</span><input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} max={new Date().toISOString().slice(0, 10)} required /></label><small className="password-guidance full-field">Your date of birth is kept private and used to derive your age. A blood-centre clinician makes the final donation-eligibility decision.</small><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
         {error && <Notice tone="warning">{error}</Notice>}
-          <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : audience === "blood_bank" ? "Sign in to Blood Bank Dashboard" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
+          <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : isBloodBankStaff ? "Open Blood Bank Dashboard" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
+          {isBloodBankStaff ? <small className="password-guidance full-field">No Blood Bank account yet? Ask the platform administrator to issue one for your facility.</small> : mode === "signin" && onOpenBloodBankLogin ? <button className="text-button full-field" type="button" onClick={onOpenBloodBankLogin}>Blood Bank staff? Open the Blood Bank portal →</button> : null}
         </form>
       </section>
     </div>
