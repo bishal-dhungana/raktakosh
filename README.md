@@ -25,7 +25,8 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 - Private blood-request creation with a mandatory malware-scanned verification document, status tracking, event timelines, and facility review workflows.
 - Donor registration, consent controls, availability preferences, and privacy-minimised outreach invitations.
 - Facility inventory updates with adjustment history, public-visibility controls, and stale-record indicators.
-- Role-aware workspaces for requesters, donors, inventory managers, reviewers, facility administrators, and platform administrators.
+- A dedicated **Blood Bank staff sign-in** for issued facility accounts, with TOTP MFA before dashboard access.
+- Role-aware workspaces for requesters, donors, Blood Bank inventory managers, Blood Bank reviewers, Blood Bank administrators, and platform administrators.
 - Account sessions, CSRF protection, rate limiting, audit events, and TOTP multi-factor authentication for staff accounts.
 - English/Nepali public-interface support and Nepal time-zone display.
 
@@ -36,10 +37,12 @@ Raktakosh is a full-stack platform for structured blood-service coordination in 
 | Guest | Search public, verified facility availability without creating an account. |
 | Requester | Submit private coordination requests and follow their status. |
 | Donor | Maintain consent and availability preferences; respond to controlled outreach invitations. |
-| Inventory manager | Record accountable inventory updates for an assigned verified facility. |
-| Reviewer | Review requests, add internal notes, update permitted states, and launch eligible donor outreach. |
-| Facility administrator | Oversee facility operations and request coordination. |
+| Blood Bank inventory manager | Record accountable blood-availability updates for an assigned verified facility. |
+| Blood Bank reviewer | Review requester queries, add internal notes, update permitted states, and launch eligible donor outreach. |
+| Blood Bank administrator | Access requester queries, consented donor responses, Blood Bank availability controls, and operational request coordination for the assigned facility. |
 | Platform administrator | Review facilities, staff account state, policy versions, and audit activity. |
+
+Blood Bank staff accounts are issued by the platform or verified facility administration; they cannot be created through public requester/donor registration.
 
 ## How coordination works
 
@@ -210,7 +213,7 @@ For exact environment-variable guidance, privileges, and deployment order, use t
 - Authentication is rate-limited; sessions and temporary authentication challenges are stored as hashes.
 - Staff use TOTP multi-factor authentication, with encrypted secrets at rest.
 - Inventory changes, request workflow events, staff changes, and public searches create audit records.
-- Verification documents are enabled only when private R2 storage and the private ClamAV scanner are fully configured. The workflow fails closed: unscanned or malicious documents never create a request or enter object storage.
+- Verification documents use private R2 storage, signature/type/size validation, short-lived authorized download links, review states, and audit logs. The current `basic_validation` scan mode labels every upload as **unscanned**; use a private malware scanner before a public health-service rollout.
 - Do not use the platform as an emergency response service or a substitute for direct clinical communication with a blood-service facility.
 
 ## Documentation

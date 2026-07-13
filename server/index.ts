@@ -51,7 +51,7 @@ import {
 } from "./db";
 import { REQUEST_STATUS_LABELS, availabilityState, canTransition, makeRequestReference } from "./domain";
 import { decryptMfaSecret, encryptMfaSecret, generateTotpSecret, totpUri, verifyTotp } from "./security";
-import { canViewFacilityCasework } from "./facility-access";
+import { canViewFacilityCasework, isBloodBankStaff } from "./facility-access";
 import {
   DONOR_SCREENING_QUESTIONS,
   DONOR_SCREENING_VERSION,
@@ -489,26 +489,41 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+async function completeLogin(req: Request, res: Response, staffOnly: boolean): Promise<void> {
+  const email = text(req.body?.email, 190).toLowerCase();
+  const password = text(req.body?.password, 200);
+  if (!email || !password) return apiError(res, 400, "Email and password are required.");
+  const user = await getAuthUserByEmail(email);
+  if (!user || user.accountStatus !== "active" || !verifyPassword(password, user.passwordHash)) {
+    await writeAudit(null, staffOnly ? "blood_bank_login_denied" : "login_denied", "account", email, { source: clientIp(req) });
+    return apiError(res, 401, "The email or password is not correct.");
+  }
+  if (staffOnly && !isBloodBankStaff(user.role)) {
+    await writeAudit(user.id, "blood_bank_login_denied", "account", user.id, { source: clientIp(req), reason: "not_blood_bank_staff" });
+    return apiError(res, 403, "This is the Blood Bank staff sign-in. Use the standard account sign-in for this account.");
+  }
+  if (requiresMfa(user.role)) {
+    const purpose = user.mfaEnabledAt && user.mfaSecretEncrypted ? "mfa_verify" : "mfa_enroll";
+    const challengeToken = await createAuthChallenge(user.id, purpose);
+    res.json({ mfaRequired: purpose === "mfa_verify", mfaEnrollmentRequired: purpose === "mfa_enroll", mfaChallengeToken: challengeToken });
+    return;
+  }
+  const session = await createSession(user.id);
+  const viewer = await getCurrentUser(session.token);
+  await writeAudit(user.id, staffOnly ? "blood_bank_login_succeeded" : "login_succeeded", "account", user.id, { source: clientIp(req) });
+  res.cookie(sessionCookieName, session.token, cookieOptions());
+  res.json({ user: viewer, csrfToken: session.csrfToken });
+}
+
 app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
   try {
-    const email = text(req.body?.email, 190).toLowerCase();
-    const password = text(req.body?.password, 200);
-    if (!email || !password) return apiError(res, 400, "Email and password are required.");
-    const user = await getAuthUserByEmail(email);
-    if (!user || user.accountStatus !== "active" || !verifyPassword(password, user.passwordHash)) {
-      await writeAudit(null, "login_denied", "account", email, { source: clientIp(req) });
-      return apiError(res, 401, "The email or password is not correct.");
-    }
-    if (requiresMfa(user.role)) {
-      const purpose = user.mfaEnabledAt && user.mfaSecretEncrypted ? "mfa_verify" : "mfa_enroll";
-      const challengeToken = await createAuthChallenge(user.id, purpose);
-      return res.json({ mfaRequired: purpose === "mfa_verify", mfaEnrollmentRequired: purpose === "mfa_enroll", mfaChallengeToken: challengeToken });
-    }
-    const session = await createSession(user.id);
-    const viewer = await getCurrentUser(session.token);
-    await writeAudit(user.id, "login_succeeded", "account", user.id, { source: clientIp(req) });
-    res.cookie(sessionCookieName, session.token, cookieOptions());
-    res.json({ user: viewer, csrfToken: session.csrfToken });
+    await completeLogin(req, res, false);
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/blood-bank/login", authRateLimit, async (req, res, next) => {
+  try {
+    await completeLogin(req, res, true);
   } catch (error) { next(error); }
 });
 

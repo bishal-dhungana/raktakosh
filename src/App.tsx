@@ -55,6 +55,26 @@ const allowedClientTransitions: Partial<Record<RequestStatus, RequestStatus[]>> 
   facility_follow_up: ["fulfilled", "unable_to_fulfill", "cancelled"]
 };
 
+const roleLabels = {
+  requester: "Requester",
+  donor: "Donor",
+  inventory_manager: "Blood Bank Inventory Manager",
+  reviewer: "Blood Bank Reviewer",
+  facility_admin: "Blood Bank Admin",
+  platform_admin: "Platform Administrator"
+} satisfies Record<CurrentUser["role"], string>;
+
+const requestOperationalActions: Partial<Record<RequestStatus, { status: RequestStatus; label: string }>> = {
+  submitted: { status: "under_review", label: "Start review" },
+  needs_information: { status: "under_review", label: "Resume review" },
+  under_review: { status: "verified", label: "Verify for coordination" },
+  verified: { status: "inventory_located", label: "Record blood located" },
+  inventory_located: { status: "reservation_pending", label: "Record reservation" },
+  reservation_pending: { status: "fulfilled", label: "Record fulfillment" },
+  donor_response_received: { status: "facility_follow_up", label: "Start facility follow-up" },
+  facility_follow_up: { status: "fulfilled", label: "Record fulfillment" }
+};
+
 function formatDate(value: string, locale: Locale, withTime = true): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -129,6 +149,7 @@ function App() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [view, setView] = useState<"home" | "dashboard">("home");
   const [authOpen, setAuthOpen] = useState(false);
+  const [authAudience, setAuthAudience] = useState<"personal" | "blood_bank">("personal");
   const [notice, setNotice] = useState("");
   const [availability, setAvailability] = useState<PublicAvailability[]>([]);
   const [searching, setSearching] = useState(true);
@@ -165,6 +186,7 @@ function App() {
       setView("dashboard");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
+      setAuthAudience("personal");
       setAuthOpen(true);
     }
   }
@@ -190,7 +212,10 @@ function App() {
               <button className="button button-outline" onClick={() => void logout()}>{t(locale, "signOut")}</button>
             </>
           ) : (
-            <button className="button button-ink" onClick={() => setAuthOpen(true)}>{t(locale, "signIn")}</button>
+            <>
+              <button className="button button-quiet" onClick={() => { setAuthAudience("blood_bank"); setAuthOpen(true); }}>Blood Bank login</button>
+              <button className="button button-ink" onClick={() => { setAuthAudience("personal"); setAuthOpen(true); }}>{t(locale, "signIn")}</button>
+            </>
           )}
         </div>
       </header>
@@ -207,7 +232,7 @@ function App() {
             searching={searching}
             onSearch={() => void loadAvailability()}
             onRequest={startRequest}
-            onExplore={() => setAuthOpen(true)}
+            onExplore={() => { setAuthAudience("personal"); setAuthOpen(true); }}
           />
         ) : user ? (
           <Dashboard user={user} locale={locale} onMessage={setNotice} onReturnHome={() => setView("home")} />
@@ -220,7 +245,7 @@ function App() {
         <span>Asia/Kathmandu · Version 1.0</span>
       </footer>
 
-      {authOpen && <AuthDialog locale={locale} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
+      {authOpen && <AuthDialog locale={locale} initialAudience={authAudience} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
     </div>
   );
 }
@@ -336,8 +361,9 @@ function AvailabilityCard({ item, locale }: { item: PublicAvailability; locale: 
   );
 }
 
-function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
+function AuthDialog({ locale, initialAudience, onClose, onLoggedIn }: { locale: Locale; initialAudience: "personal" | "blood_bank"; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
   const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [audience, setAudience] = useState<"personal" | "blood_bank">(initialAudience);
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "requester", bloodGroup: "", rhFactor: "+", district: "", dateOfBirth: "", outreachConsent: false });
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
@@ -356,7 +382,7 @@ function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: 
     event.preventDefault();
     setWorking(true); setError("");
     try {
-      const endpoint = mode === "signin" ? "/api/auth/login" : "/api/auth/register";
+      const endpoint = audience === "blood_bank" ? "/api/auth/blood-bank/login" : mode === "signin" ? "/api/auth/login" : "/api/auth/register";
       const payload = mode === "signin" ? { email: form.email, password: form.password } : form;
       const result = await api<{ user?: CurrentUser; mfaRequired?: boolean; mfaEnrollmentRequired?: boolean; mfaChallengeToken?: string }>(endpoint, { method: "POST", body: JSON.stringify(payload) });
       if (result.mfaRequired && result.mfaChallengeToken) {
@@ -407,18 +433,19 @@ function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: 
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title" onMouseDown={(event) => event.stopPropagation()}>
         <button className="dialog-close" onClick={onClose} aria-label="Close sign in">×</button>
-        <Pill className="access-pill">SECURE ACCOUNT ACCESS</Pill>
-        <h2 id="auth-title">{mode === "signin" ? "Welcome back." : "Create your account."}</h2>
-        <p>{mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Facility staff accounts are provisioned by an authorized administrator."}</p>
-        <div className="auth-mode-switch" role="tablist" aria-label="Account access mode"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }} role="tab" aria-selected={mode === "signin"}>Sign in</button><button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }} role="tab" aria-selected={mode === "register"}>Create account</button></div>
+        <Pill className="access-pill">{audience === "blood_bank" ? "BLOOD BANK STAFF ACCESS" : "SECURE ACCOUNT ACCESS"}</Pill>
+        <h2 id="auth-title">{audience === "blood_bank" ? "Blood Bank staff sign-in." : mode === "signin" ? "Welcome back." : "Create your account."}</h2>
+        <p>{audience === "blood_bank" ? "Use the staff account issued to you by the Blood Bank or platform administrator. Staff sign-in requires multi-factor authentication." : mode === "signin" ? "Sign in to continue to your private coordination workspace." : "Requester and donor accounts can be created here. Blood Bank staff accounts are provisioned by an authorized administrator."}</p>
+        <div className="auth-mode-switch" role="tablist" aria-label="Account audience"><button className={audience === "personal" ? "active" : ""} onClick={() => { setAudience("personal"); setMode("signin"); setError(""); }} role="tab" aria-selected={audience === "personal"}>Personal account</button><button className={audience === "blood_bank" ? "active" : ""} onClick={() => { setAudience("blood_bank"); setMode("signin"); setError(""); }} role="tab" aria-selected={audience === "blood_bank"}>Blood Bank staff</button></div>
+        {audience === "personal" && <div className="auth-mode-switch" role="tablist" aria-label="Personal account access mode"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }} role="tab" aria-selected={mode === "signin"}>Sign in</button><button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }} role="tab" aria-selected={mode === "register"}>Create account</button></div>}
         <form className="auth-form account-form" onSubmit={submit}>
-          {mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
+          {audience === "personal" && mode === "register" && <><label><span>Full name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required autoComplete="name" /></label><label><span>Phone number</span><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="+97798…" required autoComplete="tel" /></label></>}
           <label><span>Email address</span><input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required autoComplete="email" /></label>
-          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={mode === "register" ? 12 : undefined} required autoComplete={mode === "signin" ? "current-password" : "new-password"} /></label>
-          {mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
-          {mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label><span>Date of birth</span><input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} max={new Date().toISOString().slice(0, 10)} required /></label><small className="password-guidance full-field">Your date of birth is kept private and used to derive your age. A blood-centre clinician makes the final donation-eligibility decision.</small><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
+          <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={audience === "personal" && mode === "register" ? 12 : undefined} required autoComplete={audience === "blood_bank" || mode === "signin" ? "current-password" : "new-password"} /></label>
+          {audience === "personal" && mode === "register" && <small className="password-guidance full-field">Use 12+ characters including upper-case, lower-case, a number, and a symbol.</small>}
+          {audience === "personal" && mode === "register" && <><label><span>Account type</span><select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="requester">Requester</option><option value="donor">Voluntary donor</option></select></label>{form.role === "donor" && <><label><span>Self-reported blood group</span><select value={form.bloodGroup} onChange={(event) => setForm({ ...form, bloodGroup: event.target.value })} required><option value="">Choose</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label><label><span>Rh factor</span><select value={form.rhFactor} onChange={(event) => setForm({ ...form, rhFactor: event.target.value })}><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label><label><span>{t(locale, "district")}</span><select value={form.district} onChange={(event) => setForm({ ...form, district: event.target.value })} required><option value="">{t(locale, "chooseDistrict")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label><label><span>Date of birth</span><input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} max={new Date().toISOString().slice(0, 10)} required /></label><small className="password-guidance full-field">Your date of birth is kept private and used to derive your age. A blood-centre clinician makes the final donation-eligibility decision.</small><label className="consent-toggle full-field"><input type="checkbox" checked={form.outreachConsent} onChange={(event) => setForm({ ...form, outreachConsent: event.target.checked })} /><span><b>I choose to receive controlled outreach invitations.</b><small>You can change or withdraw this preference later.</small></span></label></>}</>}
         {error && <Notice tone="warning">{error}</Notice>}
-          <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
+          <button className="button button-signal" type="submit" disabled={working}>{working ? "Please wait…" : audience === "blood_bank" ? "Sign in to Blood Bank Dashboard" : mode === "signin" ? t(locale, "signIn") : "Create secure account"}</button>
         </form>
       </section>
     </div>
@@ -426,10 +453,10 @@ function AuthDialog({ locale, onClose, onLoggedIn }: { locale: Locale; onClose: 
 }
 
 function Dashboard({ user, locale, onMessage, onReturnHome }: { user: CurrentUser; locale: Locale; onMessage: (message: string) => void; onReturnHome: () => void }) {
-  const title = { requester: "Your coordination desk", donor: "Your donor controls", inventory_manager: "Facility availability desk", reviewer: "Facility review queue", facility_admin: "Facility operations", platform_admin: "Platform governance desk" }[user.role];
+  const title = { requester: "Your coordination desk", donor: "Your donor controls", inventory_manager: "Blood Bank availability desk", reviewer: "Blood Bank request desk", facility_admin: "Blood Bank Admin dashboard", platform_admin: "Platform governance desk" }[user.role];
   return (
     <section className="dashboard-shell section-wrap">
-      <div className="dashboard-topline"><button className="back-link" onClick={onReturnHome}>← Public search</button><Pill className="role-pill">{user.role.replaceAll("_", " ")}</Pill></div>
+      <div className="dashboard-topline"><button className="back-link" onClick={onReturnHome}>← Public search</button><Pill className="role-pill">{roleLabels[user.role]}</Pill></div>
       <div className="dashboard-heading"><div><div className="section-kicker">PRIVATE WORKSPACE</div><h1>{title}</h1><p>Signed in as {user.name}{user.facilityName ? ` · ${user.facilityName}` : ""}.</p></div><div className="user-stamp"><Logo /><span><b>{user.name.split(" ").map((part) => part[0]).join("")}</b><small>verified active session</small></span></div></div>
       <Notice>{user.role === "platform_admin" ? "Administrative actions are recorded in the audit trail and scoped to platform governance." : "Request status supports coordination. Blood matching, medical eligibility, and final availability confirmation remain facility responsibilities."}</Notice>
       {user.role === "requester" && <RequesterDashboard locale={locale} onMessage={onMessage} />}
@@ -618,6 +645,17 @@ function FacilityWorkspace({ user, locale, onMessage }: { user: CurrentUser; loc
     try { await api("/api/inventory", { method: "POST", body: JSON.stringify({ ...inventoryForm, availableQuantity: Number(inventoryForm.availableQuantity), reservedQuantity: Number(inventoryForm.reservedQuantity) }) }); onMessage("Availability recorded with an audit adjustment."); await load(); }
     catch (error) { onMessage(error instanceof Error ? error.message : "Inventory update could not be saved."); }
   }
+  function updateAvailabilityFromRecord(item: InventoryItem) {
+    setInventoryForm({ bloodGroup: item.bloodGroup, rhFactor: item.rhFactor, component: item.component, availableQuantity: String(item.availableQuantity), reservedQuantity: String(item.reservedQuantity), reason: "routine_count", note: "", publicVisible: item.publicVisible });
+    setActivePanel("inventory");
+  }
+  async function completeOperationalRequestAction(request: BloodRequest, targetStatus: RequestStatus) {
+    try {
+      await api(`/api/requests/${request.id}/status`, { method: "POST", body: JSON.stringify({ status: targetStatus }) });
+      onMessage(`${request.reference} moved to ${statusLabels[targetStatus]}. Confirm physical stock and clinical steps through your Blood Bank process.`);
+      await load();
+    } catch (error) { onMessage(error instanceof Error ? error.message : "The request step could not be saved."); }
+  }
   async function downloadDocument(documentId: number) {
     try {
       const result = await api<{ url: string; expiresAt: string }>(`/api/request-documents/${documentId}/download`);
@@ -666,17 +704,19 @@ function FacilityWorkspace({ user, locale, onMessage }: { user: CurrentUser; loc
   const openRequestCount = operations.requestCounts.filter((item) => !["fulfilled", "unable_to_fulfill", "rejected", "cancelled", "expired"].includes(item.status)).reduce((total, item) => total + item.count, 0);
   const panels: Array<{ id: typeof activePanel; label: string; visible: boolean }> = [
     { id: "overview", label: "Overview", visible: true },
-    { id: "requests", label: "Private requests", visible: operations.privateCaseworkAvailable },
+    { id: "requests", label: "Requester queries", visible: operations.privateCaseworkAvailable },
     { id: "documents", label: "Request documents", visible: operations.privateCaseworkAvailable },
-    { id: "donors", label: "Donor responses", visible: operations.privateCaseworkAvailable },
-    { id: "inventory", label: "Inventory", visible: true }
-    ,{ id: "profile", label: "Facility profile", visible: true }
+    { id: "donors", label: "Donor queries", visible: operations.privateCaseworkAvailable },
+    { id: "inventory", label: "Blood availability", visible: true }
+    ,{ id: "profile", label: "Blood Bank profile", visible: true }
   ];
   return <div className="facility-workspace">
-    <div className="blood-centre-heading"><div><div className="card-eyebrow">VERIFIED BLOOD-CENTRE OPERATIONS</div><h2>{operations.facility.name}</h2><p>{operations.facility.district} · {operations.facility.verificationStatus} facility access</p></div><span>Private data is logged and visible only to authorized coordination staff.</span></div>
+    <div className="blood-centre-heading"><div><div className="card-eyebrow">VERIFIED BLOOD BANK DASHBOARD</div><h2>{operations.facility.name}</h2><p>{operations.facility.district} · {operations.facility.verificationStatus} Blood Bank access</p></div><span>Private data is logged and visible only to authorized coordination staff.</span></div>
     <div className="facility-stats"><article><small>ACTIVE CASES</small><b>{openRequestCount}</b><span>across documented states</span></article><article className={operations.urgentOpenCount ? "attention-stat" : ""}><small>URGENT / CRITICAL</small><b>{operations.urgentOpenCount}</b><span>open coordination cases</span></article><article><small>AWAITING REVIEW</small><b>{operations.pendingReviewCount}</b><span>document or request review</span></article><article><small>DONOR RESPONSES</small><b>{operations.donorResponseCount}</b><span>consented to contact</span></article><article className={operations.staleCount ? "attention-stat" : ""}><small>STALE INVENTORY</small><b>{operations.staleCount}</b><span>needs an inventory check</span></article></div>
     <div className="facility-tabs" role="tablist" aria-label="Blood-centre operations">{panels.filter((panel) => panel.visible).map((panel) => <button key={panel.id} className={activePanel === panel.id ? "active" : ""} role="tab" aria-selected={activePanel === panel.id} onClick={() => setActivePanel(panel.id)}>{panel.label}</button>)}</div>
     {activePanel === "overview" && <div className="facility-grid overview-grid"><Card><div className="card-eyebrow">OPERATIONAL OVERVIEW</div><h2>Coordinate the next safe step.</h2><p className="card-intro">Use this workspace for verified facility operations. Requester contacts and donor responses are scoped to this facility and audited whenever authorized staff access them.</p><div className="request-counts">{operations.requestCounts.length ? operations.requestCounts.map((item) => <div key={item.status}><StatusPill status={item.status} /><b>{item.count}</b></div>) : <EmptyState title="No active records" body="New coordination cases will appear here when submitted to this facility." />}</div></Card><Card><div className="card-eyebrow">YOUR ACCESS</div><h2>{operations.privateCaseworkAvailable ? "Private casework enabled." : "Inventory-only access."}</h2><p className="card-intro">{operations.privateCaseworkAvailable ? "You can review requests and see contact details only for donors who accepted this facility’s outreach invitation." : "You can manage facility inventory. Private request and donor contact data is reserved for reviewers and facility administrators."}</p><Notice>{operations.todayUpdates} inventory adjustment{operations.todayUpdates === 1 ? "" : "s"} recorded by your account today.</Notice></Card></div>}
+    {activePanel === "overview" && canEditInventory && <Card className="quick-availability-card"><div className="card-eyebrow">QUICK AVAILABILITY UPDATE</div><h2>Update your Blood Bank availability.</h2><p className="card-intro">Choose a current blood record, enter the latest count, and save an accountable adjustment. Public search uses this facility-reported availability.</p><div className="inventory-list">{operations.inventory.length ? operations.inventory.slice(0, 6).map((item) => <div className="inventory-row" key={item.id}><div><b>{item.bloodGroup}<sup>{item.rhFactor}</sup></b><span>{item.component}</span></div><div><strong>{item.availableQuantity}</strong><button className="text-button" onClick={() => updateAvailabilityFromRecord(item)}>Update availability</button></div></div>) : <EmptyState title="No availability records" body="Open Blood availability to record the first group and component." />}</div><button className="button button-outline" onClick={() => setActivePanel("inventory")}>Manage all blood availability</button></Card>}
+    {activePanel === "overview" && canReview && operations.privateCaseworkAvailable && <Card className="quick-request-actions"><div className="card-eyebrow">REQUEST COORDINATION</div><h2>Record the next verified Blood Bank step.</h2><p className="card-intro">These actions only update the coordination record. They do not create an automatic blood match, clinical approval, or physical reservation.</p>{operations.cases.length ? <div className="request-stack">{operations.cases.slice(0, 6).map((request) => { const action = requestOperationalActions[request.status]; return <div className="inventory-row" key={request.id}><div><b>{request.reference}</b><span>{request.bloodGroup}{request.rhFactor} · {request.component} · {statusLabels[request.status]}</span></div>{action ? <button className="button button-ink" onClick={() => void completeOperationalRequestAction(request, action.status)}>{action.label}</button> : <button className="button button-outline" onClick={() => setActivePanel("requests")}>View query</button>}</div>; })}</div> : <EmptyState title="No open requester queries" body="New requests assigned to this Blood Bank will appear here." />}</Card>}
     {activePanel === "requests" && operations.privateCaseworkAvailable && <Card className="queue-card"><div className="card-eyebrow">PRIVATE REQUEST QUEUE</div><h2>Review only cases assigned to your facility.</h2><p className="card-intro">Requester contact details are private operational data. Use them only for the selected case and do not copy or export them.</p>{operations.cases.length ? <div className="request-stack">{operations.cases.map((request) => <RequestCard key={request.id} request={request} locale={locale} staff privateContact={request.requester} controls={canReview ? <div className="review-controls"><div className="transition-row"><select value={changes[request.id]?.status ?? ""} onChange={(event) => updateChange(request.id, "status", event.target.value)} aria-label={`New status for ${request.reference}`}><option value="">Choose permitted next state</option>{(allowedClientTransitions[request.status] ?? []).map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</select><input value={changes[request.id]?.message ?? ""} onChange={(event) => updateChange(request.id, "message", event.target.value)} placeholder="Requester-safe update (required for outcomes)" /><button className="button button-ink" onClick={() => void updateStatus(request)}>Update</button></div><div className="note-row"><input value={changes[request.id]?.note ?? ""} onChange={(event) => updateChange(request.id, "note", event.target.value)} placeholder="Internal note — never shown to requester" /><button className="button button-outline" onClick={() => void addNote(request)}>Add note</button>{request.status === "inventory_unavailable" && <button className="button button-signal" onClick={() => void startOutreach(request)}>Start donor outreach</button>}</div></div> : null} />)}</div> : <EmptyState title="No facility cases" body="New requests assigned to this verified facility will appear here." />}</Card>}
     {activePanel === "documents" && operations.privateCaseworkAvailable && <Card className="queue-card"><div className="card-eyebrow">PRIVATE REQUEST DOCUMENTS</div><h2>Review verification documents before coordination begins.</h2><Notice>Every opening creates an audit event and uses a short-lived secure link. Documents marked “unscanned” passed only basic file validation.</Notice>{operations.documents.length ? <div className="request-stack">{operations.documents.map((document) => { const change = documentReviewChanges[document.id] ?? { reviewStatus: "accepted" as const, reviewNote: "" }; const pending = document.reviewStatus === "pending"; return <article className="request-card" key={document.id}><div className="request-card-top"><div><span className="reference">{document.requestReference}</span><h3>{document.originalName}</h3></div><Pill className="doc-pill">{document.reviewStatus}</Pill></div><div className="request-meta"><span>{document.patientInitials} · {document.urgency}</span><span>{document.mimeType.replace("application/", "")} · {formatBytes(document.byteSize)}</span></div><p className="request-message">File security: <b>{document.scanStatus === "unscanned" ? "basic validation only — unscanned" : document.scanStatus}</b> · Uploaded {formatDate(document.createdAt, locale)} · Retained until {formatDate(document.retentionUntil, locale, false)}</p><div className="review-controls"><button className="button button-ink" onClick={() => void downloadDocument(document.id)}>Open secure document</button>{canReview && pending && <><label><span>Document decision</span><select value={change.reviewStatus} onChange={(event) => setDocumentReviewChanges((current) => ({ ...current, [document.id]: { reviewStatus: event.target.value as "accepted" | "rejected", reviewNote: current[document.id]?.reviewNote ?? "" } }))}><option value="accepted">Accept document</option><option value="rejected">Request replacement</option></select></label><label><span>Review note {change.reviewStatus === "rejected" ? "(required)" : "(optional)"}</span><input value={change.reviewNote} maxLength={500} onChange={(event) => setDocumentReviewChanges((current) => ({ ...current, [document.id]: { reviewStatus: current[document.id]?.reviewStatus ?? "accepted", reviewNote: event.target.value } }))} /></label><button className="button button-signal" onClick={() => void reviewDocument(document.id)}>Save document review</button></>}</div></article>; })}</div> : <EmptyState title="No request documents" body="Documents for cases assigned to this facility will appear here for review." />}</Card>}
     {activePanel === "donors" && operations.privateCaseworkAvailable && <Card className="donor-response-card"><div className="card-eyebrow">CONSENTED DONOR RESPONSES</div><h2>Contact only donors who opted in.</h2><Notice>These details appear only after a donor accepted this facility’s outreach invitation. Do not use them for unrelated contact or export them.</Notice>{operations.donorResponses.length ? <div className="donor-response-list">{operations.donorResponses.map((response) => { const screening = donorScreenings[response.donorUserId]; const review = reviewChanges[response.donorUserId]; const donatedOn = donationDates[response.donorUserId] ?? new Date().toISOString().slice(0, 10); return <article key={response.recipientId}><div><Pill className="verification verified">Contact accepted</Pill><h3>{response.donorName}</h3><p>{response.bloodGroup}<sup>{response.rhFactor}</sup> · {response.component} · {response.district}</p><small>Age {response.age ?? "not recorded"} · pre-screening {response.eligibilityStatus.replaceAll("_", " ")}</small><small>For {response.requestReference} · responded {formatDate(response.respondedAt, locale)}</small>{screening && <div className="screening-review"><b>Confidential pre-screening</b>{screening.submittedAt ? <><div className="screening-answer-list">{DONOR_SCREENING_QUESTIONS.map((question) => <p key={question.key}><span>{question.label}</span><strong>{screening.answers[question.key]?.replaceAll("_", " ") ?? "Not answered"}</strong></p>)}</div><div className="screening-review-controls"><label><span>Facility review status</span><select value={review?.eligibilityStatus ?? "provisionally_eligible"} onChange={(event) => setReviewChanges((current) => ({ ...current, [response.donorUserId]: { eligibilityStatus: event.target.value as "needs_review" | "provisionally_eligible" | "not_eligible_now", reviewReason: event.target.value } }))}><option value="needs_review">Needs review</option><option value="provisionally_eligible">Provisionally eligible</option><option value="not_eligible_now">Not eligible now</option></select></label><label><span>Review note {review?.eligibilityStatus === "not_eligible_now" ? "(required)" : "(optional)"}</span><input value={review?.reviewReason ?? ""} onChange={(event) => setReviewChanges((current) => ({ ...current, [response.donorUserId]: { eligibilityStatus: current[response.donorUserId]?.eligibilityStatus ?? "provisionally_eligible", reviewReason: current[response.donorUserId]?.reviewReason ?? "" } }))} maxLength={500} /></label><button className="button button-outline" onClick={() => void saveDonorReview(response.donorUserId)}>Save review</button></div></> : <p className="screening-empty">The donor has not submitted the current confidential pre-screening.</p>}</div>}</div><div className="donor-contact-actions"><a className="button button-ink" href={`tel:${response.phone}`}>Call donor</a><span>{response.phone}</span><small>Preferred: {response.contactWindow}</small><button className="text-button" onClick={() => void viewDonorScreening(response.donorUserId)} disabled={screeningLoading === response.donorUserId}>{screeningLoading === response.donorUserId ? "Loading…" : screening ? "Hide screening" : "Review screening"}</button>{canReview && <div className="donation-record-controls"><label><span>Confirmed donation date</span><input type="date" value={donatedOn} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setDonationDates((current) => ({ ...current, [response.donorUserId]: event.target.value }))} /></label><button className="button button-outline" onClick={() => void recordDonation(response.donorUserId)}>Record donation</button></div>}</div></article>; })}</div> : <EmptyState title="No accepted donor responses" body="Donor details appear here only after a donor accepts a controlled outreach invitation." />}</Card>}

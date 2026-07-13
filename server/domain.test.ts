@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { availabilityState, canTransition, isStale } from "./domain";
-import { canViewFacilityCasework } from "./facility-access";
+import { canViewFacilityCasework, isBloodBankStaff } from "./facility-access";
 import { deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, preliminaryEligibilityStatus } from "../src/donor-screening";
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
 import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, safeDocumentName, scanDocument, validateDocument } from "./document-storage";
@@ -19,6 +19,15 @@ test("limits facility casework to coordination roles", () => {
   assert.equal(canViewFacilityCasework("facility_admin"), true);
   assert.equal(canViewFacilityCasework("inventory_manager"), false);
   assert.equal(canViewFacilityCasework("platform_admin"), false);
+});
+
+test("restricts the dedicated Blood Bank sign-in to issued facility staff accounts", () => {
+  assert.equal(isBloodBankStaff("inventory_manager"), true);
+  assert.equal(isBloodBankStaff("reviewer"), true);
+  assert.equal(isBloodBankStaff("facility_admin"), true);
+  assert.equal(isBloodBankStaff("requester"), false);
+  assert.equal(isBloodBankStaff("donor"), false);
+  assert.equal(isBloodBankStaff("platform_admin"), false);
 });
 
 test("derives a Nepal-local age without storing an editable age", () => {
