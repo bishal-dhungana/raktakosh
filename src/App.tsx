@@ -233,7 +233,7 @@ function Home({
       <section className="hero" aria-labelledby="hero-title">
         <div className="hero-ink">
           <div className="hero-copy">
-            <Pill className="version-pill"><span className="live-mark" /> NEPAL NETWORK · VERSION 1.0</Pill>
+            <Pill className="version-pill"><span className="live-mark" /> BLOOD SUPPORT · NEPAL</Pill>
             <h1 id="hero-title">{t(locale, "verifiedStep")}</h1>
             <p>{t(locale, "heroBody")}</p>
             <div className="hero-actions">
@@ -241,16 +241,28 @@ function Home({
               <button className="button button-ghost-light" onClick={onRequest}>{t(locale, "requestBlood")}</button>
             </div>
           </div>
-          <div className="coordination-card" aria-label={t(locale, "verifiedCoordination")}>
-            <div className="coordination-card-top"><span>{t(locale, "verifiedCoordination")}</span><span>01—03</span></div>
-            <ol>
-              <li><b>01</b><span>{t(locale, "coordinationStepOne")}</span></li>
-              <li><b>02</b><span>{t(locale, "coordinationStepTwo")}</span></li>
-              <li><b>03</b><span>{t(locale, "coordinationStepThree")}</span></li>
-            </ol>
+          <div className="hero-visual" aria-label={t(locale, "verifiedCoordination")}>
+            <div className="hero-orb hero-orb-large" />
+            <div className="hero-orb hero-orb-small" />
+            <div className="blood-bag-visual" aria-hidden="true"><span className="bag-label">RAKTAKOSH</span><span className="bag-drop" /><span className="bag-line" /></div>
+            <div className="hero-callout"><span className="hero-callout-icon">+</span><div><b>Find support faster</b><small>Official Blood Bank contacts and reported stock in one place.</small></div></div>
+            <div className="coordination-card">
+              <div className="coordination-card-top"><span>{t(locale, "verifiedCoordination")}</span><span>01—03</span></div>
+              <ol>
+                <li><b>01</b><span>{t(locale, "coordinationStepOne")}</span></li>
+                <li><b>02</b><span>{t(locale, "coordinationStepTwo")}</span></li>
+                <li><b>03</b><span>{t(locale, "coordinationStepThree")}</span></li>
+              </ol>
+            </div>
           </div>
         </div>
         <div className="safety-strip"><span className="strip-icon">!</span><p>{t(locale, "noGuarantee")}</p><span className="strip-end">NPT</span></div>
+      </section>
+
+      <section className="trust-strip section-wrap" aria-label="Raktakosh service highlights">
+        <article><span className="trust-icon">⌖</span><div><b>Official directory</b><small>Source-backed Blood Bank records</small></div></article>
+        <article><span className="trust-icon">☎</span><div><b>Contact directly</b><small>Call the listed Blood Bank quickly</small></div></article>
+        <article><span className="trust-icon">♥</span><div><b>Built for coordination</b><small>Facility teams keep final control</small></div></article>
       </section>
 
       <BloodBankDirectory preferredDistrict={preferredDistrict} />
