@@ -837,7 +837,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--red); box-shadow
 .campaign-card button { margin-top: 18px; padding: 0 0 4px; border: 0; border-bottom: 1px solid #fff; color: white; background: transparent; font: inherit; font-size: 10px; font-weight: 900; cursor: pointer; }
 .campaign-card button:hover { color: #ffb0b0; border-color: #ffb0b0; }
 
-.blood-bank-directory-section { max-width: none; margin: 0; padding: 95px clamp(24px, 6vw, 108px); background: #f8f8f8; }
+.blood-bank-directory-section.section-wrap { width: 100%; max-width: none; margin: 0; padding: 95px clamp(24px, 6vw, 108px); background: #f8f8f8; }
 .blood-bank-directory-section .section-kicker { color: #e54245; font-size: 10px; font-weight: 900; letter-spacing: .17em; }
 .blood-bank-directory-section .section-heading { max-width: 1200px; margin-right: auto; margin-left: auto; }
 .blood-bank-directory-section .section-heading h2 { color: #2d292a; font-family: var(--display); letter-spacing: -.045em; }
