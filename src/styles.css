@@ -940,3 +940,91 @@ input:focus, select:focus, textarea:focus { border-color: var(--red); box-shadow
   .site-footer.reference-footer { grid-template-columns: 1fr; gap: 29px; padding: 48px 24px; }
   .reference-footer .footer-links:last-child { grid-column: auto; }
 }
+
+/* Public-site typography scale: keep a clear hierarchy without tiny, mixed
+   text sizes. Dashboard typography remains intentionally separate. */
+.reference-topbar { font-size: 12px; }
+.reference-header .brand small { font-size: 10px; }
+.reference-header .desktop-nav button { font-size: 12px; }
+.reference-header .header-actions .button { font-size: 11px; }
+
+.reference-eyebrow,
+.reference-section-heading > p,
+.blood-bank-directory-section .section-kicker { font-size: 11px; }
+.reference-hero-copy { font-size: 16px; }
+.reference-button { font-size: 12px; }
+.reference-section-heading > span { font-size: 16px; }
+
+.process-grid b { font-size: 11px; }
+.process-grid h3 { font-size: 18px; }
+.process-grid p { font-size: 14px; }
+
+.about-photo-badge b { font-size: 21px; }
+.about-photo-badge span { font-size: 12px; }
+.about-copy > p:not(.reference-eyebrow) { font-size: 16px; }
+.about-copy ul { font-size: 14px; }
+.reference-text-link { font-size: 13px; }
+
+.reference-cta-band p { font-size: 11px; }
+.reference-cta-band span { font-size: 14px; }
+.campaign-card span { font-size: 11px; }
+.campaign-card p { font-size: 14px; }
+.campaign-card button { font-size: 12px; }
+
+.blood-bank-directory-section .section-heading p { font-size: 15px; }
+.blood-bank-directory-section label { font-size: 12px; }
+.blood-bank-directory-section input,
+.blood-bank-directory-section select { font-size: 14px; }
+.blood-bank-directory-section .search-submit { font-size: 12px; }
+.blood-bank-directory-section .results-bar { font-size: 12px; }
+.blood-bank-directory-section .results-bar b { font-size: 30px; }
+.blood-bank-directory-section .facility-type { font-size: 10px; }
+.blood-bank-directory-section .availability-pill { font-size: 10px; }
+.blood-bank-directory-section .facility-location { font-size: 12px; }
+.blood-bank-directory-section .blood-bank-contact { font-size: 12px; }
+.blood-bank-directory-section .blood-bank-services { font-size: 11px; }
+.blood-bank-directory-section .blood-bank-stock > b { font-size: 10px; }
+.blood-bank-directory-section .blood-bank-stock li,
+.blood-bank-directory-section .blood-bank-stock p { font-size: 11px; }
+.blood-bank-directory-section .blood-bank-stock li strong { font-size: 12px; }
+.blood-bank-directory-section .blood-bank-card-bottom { font-size: 10px; }
+.blood-bank-directory-section .blood-bank-card-bottom b,
+.blood-bank-directory-section .blood-bank-card-bottom a { font-size: 11px; }
+
+.helpful-content > p:not(.reference-eyebrow) { font-size: 16px; }
+.helpful-list article > span { font-size: 12px; }
+.helpful-list h3 { font-size: 16px; }
+.helpful-list p { font-size: 13px; }
+.helpful-photo span { font-size: 11px; }
+.gallery-photo span { font-size: 11px; }
+.reference-footer .footer-brand p,
+.reference-footer .footer-links button,
+.reference-footer .footer-links span { font-size: 12px; }
+.reference-footer .footer-links b { font-size: 12px; }
+.footer-logo-line em { font-size: 10px; }
+
+@media (max-width: 760px) {
+  .reference-topbar { font-size: 10px; }
+  .reference-header .desktop-nav button { font-size: 11px; }
+  .reference-header .header-actions .button { font-size: 10px; }
+  .reference-hero-copy,
+  .reference-section-heading > span,
+  .about-copy > p:not(.reference-eyebrow),
+  .helpful-content > p:not(.reference-eyebrow) { font-size: 14px; }
+  .reference-button { font-size: 11px; }
+  .process-grid h3 { font-size: 15px; }
+  .process-grid p { font-size: 12px; }
+  .campaign-card p { font-size: 13px; }
+  .blood-bank-directory-section label { font-size: 11px; }
+  .blood-bank-directory-section input,
+  .blood-bank-directory-section select { font-size: 13px; }
+  .blood-bank-directory-section .blood-bank-card { min-height: 380px; }
+  .blood-bank-directory-section .blood-bank-card h3 { font-size: 21px; }
+  .blood-bank-directory-section .blood-bank-stock li,
+  .blood-bank-directory-section .blood-bank-stock p { font-size: 12px; }
+  .helpful-list h3 { font-size: 15px; }
+  .helpful-list p { font-size: 12px; }
+  .reference-footer .footer-brand p,
+  .reference-footer .footer-links button,
+  .reference-footer .footer-links span { font-size: 12px; }
+}
