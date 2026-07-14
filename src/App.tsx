@@ -163,18 +163,22 @@ function App() {
   return (
     <div className="site-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
-      <header className="site-header">
+      <div className="reference-topbar">
+        <div><span>Need help finding a Blood Bank?</span><a href="tel:1133">Call 1133</a><span className="topbar-divider">|</span><span>Official directory for Nepal</span></div>
+        <div><span>Follow the verified facility handoff</span><button onClick={() => setLocale(locale === "en" ? "ne" : "en")}>{t(locale, "language")}</button></div>
+      </div>
+      <header className="site-header reference-header">
         <button className="brand" onClick={() => setView("home")} aria-label="Raktakosh home">
           <Logo />
-          <span><strong>Raktakosh</strong><small>रक्तकोष</small></span>
+          <span><strong>Raktakosh</strong><small>Blood Coordination Platform</small></span>
         </button>
         <nav aria-label="Primary navigation" className="desktop-nav">
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("why-raktakosh")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Why Raktakosh</button>
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("what-we-do")?.scrollIntoView({ behavior: "smooth" }), 0); }}>What we do</button>
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Blood Banks</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("donation-process")?.scrollIntoView({ behavior: "smooth" }), 0); }}>How it works</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("about-raktakosh")?.scrollIntoView({ behavior: "smooth" }), 0); }}>About us</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Blood banks</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Information</button>
         </nav>
         <div className="header-actions">
-          <button className="language-switch" onClick={() => setLocale(locale === "en" ? "ne" : "en")} aria-label="Change language">{t(locale, "language")}</button>
           {user ? (
             <>
               <button className="button button-quiet" onClick={() => setView("dashboard")}>{t(locale, "dashboard")}</button>
@@ -182,9 +186,8 @@ function App() {
             </>
           ) : (
             <>
-              <button className="button button-quiet header-find-blood" onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Find blood</button>
               <button className="button button-outline header-request-blood" onClick={startRequest}>Request blood</button>
-              <button className="button button-ink header-bank-portal" onClick={() => setBloodBankAuthOpen(true)}>Blood Bank</button>
+              <button className="button button-ink header-bank-portal" onClick={() => setBloodBankAuthOpen(true)}>Blood Bank Login</button>
             </>
           )}
         </div>
@@ -205,10 +208,11 @@ function App() {
         ) : null}
       </main>
 
-      <footer className="site-footer">
-        <div className="footer-brand"><Logo /><span>Raktakosh <em>Blood Coordination Platform · Nepal</em></span><p>Making the next safe Blood Bank handoff easier to understand.</p></div>
-        <div className="footer-links"><b>Explore</b><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find Blood Banks</button><button onClick={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}>How it works</button><button onClick={() => setAuthOpen(true)}>Join Raktakosh</button></div>
-        <div className="footer-links"><b>Important</b><span>Facility staff confirm all availability, matching, and clinical decisions.</span><span>Asia/Kathmandu · Version 1.0</span></div>
+      <footer className="site-footer reference-footer">
+        <div className="footer-brand"><div className="footer-logo-line"><Logo /><span><b>Raktakosh</b><em>Blood Coordination Platform · Nepal</em></span></div><p>Helping people find verified Blood Bank information and a clear next step when time matters.</p></div>
+        <div className="footer-links"><b>Quick links</b><button onClick={() => document.getElementById("about-raktakosh")?.scrollIntoView({ behavior: "smooth" })}>About Raktakosh</button><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find Blood Banks</button><button onClick={() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" })}>Helpful information</button></div>
+        <div className="footer-links"><b>Get involved</b><button onClick={() => setAuthOpen(true)}>Register as donor</button><button onClick={startRequest}>Request blood</button><button onClick={() => setBloodBankAuthOpen(true)}>Blood Bank portal</button></div>
+        <div className="footer-links"><b>Important note</b><span>Blood Banks confirm availability, compatibility, donation eligibility, and all clinical decisions.</span><span>© 2026 Raktakosh Nepal</span></div>
       </footer>
 
       {authOpen && <AuthDialog locale={locale} initialAudience="personal" onOpenBloodBankLogin={() => { setAuthOpen(false); setBloodBankAuthOpen(true); }} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
@@ -231,52 +235,38 @@ function Home({
 }) {
   return (
     <>
-      <section className="hlb-hero" aria-labelledby="hero-title">
-        <div className="hlb-hero-copy">
-          <div className="hero-live"><span className="hero-live-icon">♥</span><span>Raktakosh support desk</span><b><i /> Live directory</b></div>
-          <h1 id="hero-title">Find blood support<br />when it matters<br /><em>most.</em></h1>
-          <p>Search official Blood Bank contacts, understand reported availability, and send a private request to a verified facility—without exposing sensitive information publicly.</p>
-          <div className="hero-donate-label">Get support now <span>→</span></div>
-          <div className="hero-action-pills">
-            <button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}><span>⌕</span> Find blood</button>
-            <button onClick={onRequest}><span>+</span> Request blood</button>
-            <button onClick={onExplore}><span>♥</span> Join as donor</button>
-          </div>
-        </div>
-        <div className="hlb-hero-media" aria-label="Blood donation support illustration">
-          <div className="hero-media-grid" />
-          <div className="hero-person hero-person-one"><span className="person-head" /><span className="person-body" /></div>
-          <div className="hero-person hero-person-two"><span className="person-head" /><span className="person-body" /></div>
-          <div className="hero-donor-chair"><span className="chair-back" /><span className="chair-seat" /><span className="chair-leg" /></div>
-          <div className="hero-blood-bag"><span>O+</span><i /></div>
-          <div className="hero-quote"><b>When a verified contact is easy to find, the next step can happen sooner.</b><small>Raktakosh is a coordination platform—not a reservation service.</small></div>
+      <section className="reference-hero" aria-labelledby="hero-title">
+        <div className="reference-hero-overlay" />
+        <div className="reference-hero-content">
+          <p className="reference-eyebrow">DONATE BLOOD · SAVE A LIFE</p>
+          <h1 id="hero-title">Your blood can give<br /><strong>someone another tomorrow.</strong></h1>
+          <p className="reference-hero-copy">Find verified Blood Banks, check reported availability, or begin a private request that a facility can safely review.</p>
+          <div className="reference-hero-actions"><button className="reference-button reference-button-primary" onClick={onExplore}>Become a donor</button><button className="reference-button reference-button-light" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find Blood Banks</button></div>
         </div>
       </section>
 
-      <section className="mission-video section-wrap" aria-labelledby="mission-title">
-        <div className="mission-copy"><p>For families navigating urgent needs in Nepal</p><h2 id="mission-title">The search for blood should not become another emergency.</h2><strong>We are building a clearer path from need to the right Blood Bank.</strong></div>
-        <div className="mission-film" aria-label="Raktakosh coordination overview"><div className="mission-film-glow" /><span className="mission-film-label">HOW RAKTAKOSH HELPS</span><button className="mission-play" onClick={() => document.getElementById("why-raktakosh")?.scrollIntoView({ behavior: "smooth" })} aria-label="Explore how Raktakosh works">▶</button><span className="mission-film-caption">A simple, responsible handoff from search to facility review.</span></div>
+      <section id="donation-process" className="donation-process section-wrap" aria-labelledby="process-title">
+        <div className="reference-section-heading"><p>HOW IT WORKS</p><h2 id="process-title">A simple path to the right support.</h2><span>Raktakosh makes it easier to take the next responsible step—while Blood Banks keep every clinical decision.</span></div>
+        <ol className="process-grid"><li><span className="process-icon">⌕</span><div><b>01</b><h3>Find a Blood Bank</h3><p>Search official facilities by district, name, blood group, or component.</p></div></li><li><span className="process-icon">▤</span><div><b>02</b><h3>Share your request</h3><p>Submit a private request with the required verification document.</p></div></li><li><span className="process-icon">♥</span><div><b>03</b><h3>Facility reviews</h3><p>Authorized staff review the request and reported availability.</p></div></li><li><span className="process-icon">✓</span><div><b>04</b><h3>Get the next step</h3><p>The selected Blood Bank coordinates the safe operational handoff.</p></div></li></ol>
       </section>
 
-      <section id="why-raktakosh" className="why-section section-wrap" aria-labelledby="why-title">
-        <div className="why-illustration" aria-hidden="true"><div className="why-donor" /><div className="why-worker" /><div className="why-bag"><span>+</span></div><div className="why-heart">♥</div></div>
-        <div className="why-copy"><div className="section-kicker">WHY RAKTAKOSH</div><h2 id="why-title">Right information at the right time can change everything.</h2><p>Blood availability and donor coordination are often difficult to navigate when time is limited. Raktakosh brings verified facility information, private requests, and controlled donor outreach into one understandable flow.</p><p>Facilities remain responsible for stock confirmation, matching, medical decisions, and every clinical step. The platform makes the handoff clearer.</p><button className="text-button why-link" onClick={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}>See how the handoff works →</button></div>
+      <section id="about-raktakosh" className="about-raktakosh section-wrap" aria-labelledby="about-title">
+        <div className="about-photo" role="img" aria-label="Blood donor being cared for by a health worker"><div className="about-photo-badge"><b>Raktakosh</b><span>Private · verified · clear</span></div></div>
+        <div className="about-copy"><p className="reference-eyebrow">WHO WE ARE</p><h2 id="about-title">Reliable information can make an urgent moment feel manageable.</h2><p>Raktakosh connects people to official Blood Bank contacts and supports a private, facility-led coordination flow. It does not promise reservations or replace medical judgement.</p><ul><li><span>✓</span> Official facility directory across Nepal</li><li><span>✓</span> Private requests with document review</li><li><span>✓</span> Consent-first donor coordination</li></ul><button className="reference-text-link" onClick={() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" })}>Learn about blood donation <span>→</span></button></div>
       </section>
 
-      <section id="what-we-do" className="what-we-do-section section-wrap" aria-labelledby="what-we-do-title">
-        <div className="what-copy"><div className="section-kicker">WHAT WE DO</div><h2 id="what-we-do-title">A practical network for people, donors, and Blood Banks.</h2><p>Raktakosh helps people find source-backed Blood Bank records while giving verified facilities the private tools needed to coordinate requests, availability, documents, and consented donor responses.</p><div className="what-feature-grid"><article><span className="feature-icon">⌕</span><h3>Find Blood Banks</h3><p>Search official district records, contact numbers, and reported component availability.</p></article><article><span className="feature-icon">▣</span><h3>Coordinate requests</h3><p>Send the minimum needed information to a selected verified facility.</p></article><article><span className="feature-icon">♥</span><h3>Support donors</h3><p>Use consent-first donor outreach and a clear pre-screening workflow.</p></article></div></div>
-        <aside className="what-stats" aria-label="Raktakosh capabilities"><div><b>77</b><span>Nepal districts supported</span></div><div><b>39</b><span>Official directory records</span></div><div><b>1</b><span>Clear coordination path</span></div><span className="what-stats-drop" aria-hidden="true" /></aside>
+      <section className="reference-cta-band" aria-labelledby="cta-band-title"><div><p>EVERY DONATION MATTERS</p><h2 id="cta-band-title">Give hope. Give blood.</h2><span>Join as a donor or help someone reach a verified Blood Bank today.</span></div><div><button className="reference-button reference-button-light" onClick={onExplore}>Register as donor</button><button className="reference-button reference-button-outline-light" onClick={onRequest}>Request blood</button></div></section>
+
+      <section className="campaign-section section-wrap" aria-labelledby="campaign-title">
+        <div className="reference-section-heading centered"><p>RAKTAKOSH SERVICES</p><h2 id="campaign-title">Support that meets people where they are.</h2><span>Three clear routes for donors, families, and verified Blood Bank teams.</span></div>
+        <div className="campaign-grid"><article className="campaign-card campaign-directory"><div><span>01</span><h3>Find a Blood Bank</h3><p>Search the official public directory, even without an account.</p><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Search directory →</button></div></article><article className="campaign-card campaign-request"><div><span>02</span><h3>Request blood safely</h3><p>Send a document-backed request to your chosen facility for review.</p><button onClick={onRequest}>Start a request →</button></div></article><article className="campaign-card campaign-donor"><div><span>03</span><h3>Join as a donor</h3><p>Share your details and let a facility make the final eligibility decision.</p><button onClick={onExplore}>Become a donor →</button></div></article></div>
       </section>
 
       <BloodBankDirectory preferredDistrict={preferredDistrict} />
 
-      <section id="how-it-works" className="workflow-section" aria-labelledby="workflow-title">
-        <div className="section-wrap"><div className="section-kicker light-kicker">HOW IT WORKS</div><div className="section-heading workflow-heading"><h2 id="workflow-title">A simple path from<br /><em>search to support.</em></h2><p>Raktakosh clarifies the next operational step without replacing a responsible Blood Bank’s clinical judgement.</p></div><ol className="workflow-list"><li><span className="workflow-number">01</span><div><h3>Search the directory</h3><p>Find an official Blood Bank by name, district, blood group, component, or availability snapshot.</p></div></li><li><span className="workflow-number">02</span><div><h3>Send a private request</h3><p>Attach the required document and choose a verified facility for review.</p></div></li><li><span className="workflow-number">03</span><div><h3>Facility coordinates next</h3><p>Staff confirm the next safe operational step and may use controlled outreach if needed.</p></div></li></ol></div>
-      </section>
+      <section id="helpful-information" className="helpful-information section-wrap" aria-labelledby="education-title"><div className="helpful-content"><p className="reference-eyebrow">HELPFUL INFORMATION</p><h2 id="education-title">Know the process before you donate or request.</h2><p>Clear, calm information helps families and voluntary donors decide their next step with confidence.</p><div className="helpful-list"><article><span>01</span><div><h3>{t(locale, "whatBloodTitle")}</h3><p>{t(locale, "whatBloodBody")}</p></div></article><article><span>02</span><div><h3>{t(locale, "whyDonateTitle")}</h3><p>{t(locale, "whyDonateBody")}</p></div></article><article><span>03</span><div><h3>{t(locale, "donationSafetyTitle")}</h3><p>{t(locale, "donationSafetyBody")}</p></div></article></div></div><aside className="helpful-photo" role="img" aria-label="Blood donation appointment information"><div><span>NEED BLOOD?</span><b>Find the nearest verified facility.</b><button className="reference-button reference-button-primary" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Search now</button></div></aside></section>
 
-      <section className="education-section section-wrap" aria-labelledby="education-title"><div className="section-kicker">{t(locale, "educationKicker")}</div><div className="section-heading split-heading"><div><h2 id="education-title">Clear information before every decision.</h2></div><p>Understand the process before you act. A responsible blood-service facility makes all medical and final eligibility decisions.</p></div><div className="education-grid"><article><span>01</span><h3>{t(locale, "whatBloodTitle")}</h3><p>{t(locale, "whatBloodBody")}</p></article><article><span>02</span><h3>{t(locale, "whyDonateTitle")}</h3><p>{t(locale, "whyDonateBody")}</p></article><article><span>03</span><h3>{t(locale, "donationSafetyTitle")}</h3><p>{t(locale, "donationSafetyBody")}</p></article></div></section>
-
-      <section className="final-blood-cta" aria-labelledby="final-cta-title"><div className="final-drop" aria-hidden="true"><span>+</span></div><div className="final-cta-copy"><div className="section-kicker light-kicker">NEED HELP NOW?</div><h2 id="final-cta-title">A clearer next step starts here.</h2><p>Search the Blood Bank directory or open a private coordination request. Raktakosh keeps the process organized; facilities keep the final responsibility.</p><div><button className="button button-white" onClick={onRequest}>Request blood</button><button className="button button-ghost-light" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find a Blood Bank</button></div></div></section>
+      <section className="reference-gallery" aria-labelledby="gallery-title"><div className="section-wrap"><div className="reference-section-heading gallery-heading"><p>MAKE A DIFFERENCE</p><h2 id="gallery-title">Small acts. Real impact.</h2><span>Each responsible connection helps make a stronger blood-donation network.</span></div><div className="gallery-grid"><div className="gallery-photo gallery-photo-one"><span>VOLUNTARY DONATION</span></div><div className="gallery-photo gallery-photo-two"><span>SAFE FACILITY HANDOFF</span></div><div className="gallery-photo gallery-photo-three"><span>COMMUNITY CARE</span></div><div className="gallery-join"><b>Be part of the life-saving circle.</b><button className="reference-button reference-button-primary" onClick={onExplore}>Join Raktakosh</button></div></div></div></section>
     </>
   );
 }

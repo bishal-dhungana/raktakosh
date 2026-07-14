@@ -732,3 +732,211 @@ input:focus, select:focus, textarea:focus { border-color: var(--red); box-shadow
   .final-cta-copy h2 { font-size: 37px; }
   .site-footer { grid-template-columns: 1fr; gap: 22px; padding: 35px 24px; background: #cf3d3c; }
 }
+
+/* Public homepage — conventional blood-donation layout based on the supplied
+   reference structure. These selectors are intentionally scoped so private
+   dashboards and forms retain their functional interface. */
+.reference-topbar { display: flex; min-height: 37px; justify-content: space-between; gap: 20px; align-items: center; padding: 0 clamp(24px, 6vw, 108px); color: #844b4d; background: #fff2f2; font-size: 10px; line-height: 1.2; }
+.reference-topbar > div { display: flex; gap: 10px; align-items: center; }
+.reference-topbar a, .reference-topbar button { padding: 0; border: 0; color: #e54245; background: transparent; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; }
+.reference-topbar a:hover, .reference-topbar button:hover { color: #a9262b; }
+.topbar-divider { color: #d9b5b6; }
+
+.site-header.reference-header { position: relative; z-index: 10; min-height: 82px; padding: 0 clamp(24px, 6vw, 108px); border-bottom: 1px solid #ececec; color: #302b2c; background: #fff; box-shadow: none; }
+.reference-header .brand { gap: 10px; color: #2b2829; }
+.reference-header .brand-mark { width: 34px; height: 40px; color: #e54245; }
+.reference-header .brand-mark .brand-mark-cut { stroke: white; }
+.reference-header .brand strong { color: #2c292a; font-size: 20px; letter-spacing: -.04em; }
+.reference-header .brand small { margin-top: 2px; color: #9b8f90; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.reference-header .desktop-nav { gap: clamp(15px, 2.1vw, 34px); }
+.reference-header .desktop-nav button { color: #51494a; font-size: 10px; font-weight: 800; letter-spacing: .045em; text-transform: uppercase; }
+.reference-header .desktop-nav button:hover { color: #e54245; text-decoration: none; }
+.reference-header .header-actions { gap: 8px; }
+.reference-header .header-actions .button { min-height: 36px; padding: 9px 14px; border-radius: 2px; font-size: 9px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
+.reference-header .header-actions .button-outline { border-color: #e54245; color: #e54245; background: #fff; }
+.reference-header .header-actions .button-outline:hover { color: white; background: #e54245; }
+.reference-header .header-actions .button-ink, .reference-header .header-actions .button-quiet { color: white; background: #e54245; }
+.reference-header .header-actions .button-ink:hover, .reference-header .header-actions .button-quiet:hover { background: #c83337; }
+
+.reference-hero { position: relative; display: flex; min-height: 590px; align-items: center; overflow: hidden; color: white; background: #332322 url("https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&w=2200&q=88") center 47% / cover no-repeat; }
+.reference-hero-overlay { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(31, 18, 18, .84) 0%, rgba(38, 20, 20, .68) 43%, rgba(44, 20, 20, .18) 76%, rgba(44, 20, 20, .15) 100%); }
+.reference-hero-content { position: relative; z-index: 1; width: min(760px, 92%); margin-left: clamp(24px, 11vw, 185px); padding: 88px 0 92px; }
+.reference-eyebrow { margin: 0 0 14px; color: #e54245; font-size: 10px; font-weight: 900; letter-spacing: .17em; line-height: 1.3; text-transform: uppercase; }
+.reference-hero .reference-eyebrow { color: #ff9c9c; }
+.reference-hero h1 { max-width: 690px; margin: 0; color: white; font-family: var(--display); font-size: clamp(43px, 5vw, 74px); font-weight: 800; letter-spacing: -.05em; line-height: 1.07; }
+.reference-hero h1 strong { color: #ff6868; font-weight: inherit; }
+.reference-hero-copy { max-width: 560px; margin: 21px 0 0; color: rgba(255,255,255,.9); font-size: 15px; line-height: 1.8; }
+.reference-hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.reference-button { min-height: 44px; padding: 12px 19px; border: 1px solid transparent; border-radius: 2px; font: inherit; font-size: 10px; font-weight: 900; letter-spacing: .055em; line-height: 1.1; text-transform: uppercase; cursor: pointer; transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease; }
+.reference-button:hover { transform: translateY(-2px); }
+.reference-button-primary { color: white; background: #e54245; }
+.reference-button-primary:hover { background: #c93135; }
+.reference-button-light { color: #413737; background: white; }
+.reference-button-light:hover { color: #e54245; background: #fff5f5; }
+.reference-button-outline-light { border-color: rgba(255,255,255,.78); color: white; background: transparent; }
+.reference-button-outline-light:hover { color: #e54245; border-color: white; background: white; }
+
+.donation-process { padding-top: 92px; padding-bottom: 92px; }
+.reference-section-heading { display: grid; max-width: 710px; gap: 10px; }
+.reference-section-heading > p { margin: 0; color: #e54245; font-size: 10px; font-weight: 900; letter-spacing: .17em; text-transform: uppercase; }
+.reference-section-heading h2 { margin: 0; color: #2c292a; font-family: var(--display); font-size: clamp(32px, 4vw, 49px); letter-spacing: -.045em; line-height: 1.15; }
+.reference-section-heading > span { max-width: 635px; color: #797172; font-size: 13px; line-height: 1.75; }
+.reference-section-heading.centered { max-width: 760px; margin-right: auto; margin-left: auto; text-align: center; }
+.process-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 48px 0 0; padding: 0; list-style: none; border: 1px solid #eee3e3; background: white; }
+.process-grid li { display: grid; min-height: 210px; grid-template-columns: 50px 1fr; gap: 15px; padding: 31px 25px; border-right: 1px solid #eee3e3; }
+.process-grid li:last-child { border-right: 0; }
+.process-icon { display: grid; width: 43px; height: 43px; place-items: center; border-radius: 50%; color: #e54245; background: #fff0f0; font-size: 19px; font-weight: 900; }
+.process-grid b { color: #df4a4b; font-size: 9px; letter-spacing: .12em; }
+.process-grid h3 { margin: 8px 0 8px; color: #302b2c; font-size: 15px; line-height: 1.35; }
+.process-grid p { margin: 0; color: #837b7c; font-size: 11px; line-height: 1.72; }
+
+.about-raktakosh { display: grid; grid-template-columns: minmax(320px, .95fr) minmax(330px, .85fr); gap: clamp(45px, 8vw, 132px); align-items: center; padding-top: 38px; padding-bottom: 100px; }
+.about-photo { position: relative; min-height: 480px; overflow: hidden; background: #ddd url("https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=1200&q=85") center / cover no-repeat; }
+.about-photo::after { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 50%, rgba(24,17,17,.55)); content: ""; }
+.about-photo-badge { position: absolute; z-index: 1; right: 0; bottom: 0; display: grid; gap: 4px; width: min(230px, 72%); padding: 24px; color: white; background: #e54245; }
+.about-photo-badge b { font-size: 19px; }
+.about-photo-badge span { font-size: 10px; letter-spacing: .065em; text-transform: uppercase; }
+.about-copy h2 { max-width: 550px; margin: 0; color: #2c292a; font-family: var(--display); font-size: clamp(32px, 3.9vw, 48px); letter-spacing: -.045em; line-height: 1.17; }
+.about-copy > p:not(.reference-eyebrow) { max-width: 570px; margin: 22px 0 0; color: #777071; font-size: 13px; line-height: 1.85; }
+.about-copy ul { display: grid; gap: 11px; margin: 25px 0; padding: 0; color: #4f4748; list-style: none; font-size: 12px; font-weight: 700; }
+.about-copy li { display: flex; gap: 10px; align-items: center; }
+.about-copy li span { display: grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: white; background: #e54245; font-size: 11px; }
+.reference-text-link { padding: 0 0 4px; border: 0; border-bottom: 1px solid #e54245; color: #d93c40; background: transparent; font: inherit; font-size: 11px; font-weight: 900; cursor: pointer; }
+.reference-text-link:hover { color: #a72c30; }
+.reference-text-link span { margin-left: 6px; }
+
+.reference-cta-band { display: flex; min-height: 205px; justify-content: space-between; gap: 35px; align-items: center; padding: 40px clamp(24px, 11vw, 185px); color: white; background: #e54245 url("https://images.unsplash.com/photo-1584982751601-97dcc096659c?auto=format&fit=crop&w=1600&q=80") center / cover no-repeat; background-blend-mode: multiply; }
+.reference-cta-band > div:first-child { display: grid; gap: 6px; }
+.reference-cta-band p { margin: 0; color: #ffe1e1; font-size: 9px; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+.reference-cta-band h2 { margin: 0; font-family: var(--display); font-size: clamp(29px, 3vw, 40px); letter-spacing: -.04em; }
+.reference-cta-band span { color: rgba(255,255,255,.88); font-size: 12px; }
+.reference-cta-band > div:last-child { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.campaign-section { padding-top: 97px; padding-bottom: 95px; }
+.campaign-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 48px; }
+.campaign-card { position: relative; display: flex; min-height: 340px; align-items: end; overflow: hidden; color: white; background: #3a2525 center / cover no-repeat; }
+.campaign-card::before { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(30,17,17,.05) 22%, rgba(30,17,17,.88)); content: ""; }
+.campaign-card > div { position: relative; z-index: 1; padding: 27px; }
+.campaign-directory { background-image: url("https://images.unsplash.com/photo-1584982751601-97dcc096659c?auto=format&fit=crop&w=900&q=82"); }
+.campaign-request { background-image: url("https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&w=900&q=82"); }
+.campaign-donor { background-image: url("https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=900&q=82"); }
+.campaign-card span { color: #ff9d9e; font-size: 10px; font-weight: 900; letter-spacing: .12em; }
+.campaign-card h3 { margin: 8px 0; font-family: var(--display); font-size: 26px; letter-spacing: -.035em; }
+.campaign-card p { max-width: 270px; margin: 0; color: rgba(255,255,255,.88); font-size: 11px; line-height: 1.65; }
+.campaign-card button { margin-top: 18px; padding: 0 0 4px; border: 0; border-bottom: 1px solid #fff; color: white; background: transparent; font: inherit; font-size: 10px; font-weight: 900; cursor: pointer; }
+.campaign-card button:hover { color: #ffb0b0; border-color: #ffb0b0; }
+
+.blood-bank-directory-section { max-width: none; margin: 0; padding: 95px clamp(24px, 6vw, 108px); background: #f8f8f8; }
+.blood-bank-directory-section .section-kicker { color: #e54245; font-size: 10px; font-weight: 900; letter-spacing: .17em; }
+.blood-bank-directory-section .section-heading { max-width: 1200px; margin-right: auto; margin-left: auto; }
+.blood-bank-directory-section .section-heading h2 { color: #2d292a; font-family: var(--display); letter-spacing: -.045em; }
+.blood-bank-directory-section .section-heading h2 em { color: #e54245; }
+.blood-bank-directory-section .section-heading p { color: #777071; }
+.blood-bank-directory-section .directory-search-panel { max-width: 1200px; margin: 34px auto 0; border: 1px solid #e8dfdf; background: white; }
+.blood-bank-directory-section .results-bar, .blood-bank-directory-section .blood-bank-grid { max-width: 1200px; margin-right: auto; margin-left: auto; }
+.blood-bank-directory-section .blood-bank-card { min-height: 350px; border: 0; border-top: 3px solid #e54245; border-radius: 0; box-shadow: 0 9px 25px rgba(58,35,36,.07); }
+.blood-bank-directory-section .blood-bank-card:hover { border-color: #e54245; box-shadow: 0 14px 30px rgba(58,35,36,.13); }
+.blood-bank-directory-section .blood-bank-card h3 { color: #2f2b2c; font-family: var(--display); }
+.blood-bank-directory-section .blood-bank-contact { border-radius: 0; color: #d4373b; background: #fff0f0; }
+.blood-bank-directory-section .blood-bank-contact:hover { background: #e54245; }
+
+.helpful-information { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, .8fr); gap: clamp(42px, 8vw, 126px); align-items: stretch; padding-top: 100px; padding-bottom: 100px; }
+.helpful-content h2 { max-width: 570px; margin: 0; color: #2d292a; font-family: var(--display); font-size: clamp(32px, 3.8vw, 48px); letter-spacing: -.045em; line-height: 1.17; }
+.helpful-content > p:not(.reference-eyebrow) { max-width: 560px; margin: 18px 0 0; color: #777071; font-size: 13px; line-height: 1.8; }
+.helpful-list { display: grid; gap: 0; margin-top: 29px; border-top: 1px solid #e7dfdf; }
+.helpful-list article { display: grid; grid-template-columns: 36px 1fr; gap: 14px; padding: 17px 0; border-bottom: 1px solid #e7dfdf; }
+.helpful-list article > span { color: #e54245; font-size: 11px; font-weight: 900; }
+.helpful-list h3 { margin: 0; color: #352f30; font-size: 14px; }
+.helpful-list p { margin: 6px 0 0; color: #827a7b; font-size: 11px; line-height: 1.65; }
+.helpful-photo { position: relative; display: flex; min-height: 530px; align-items: end; overflow: hidden; background: #4c3232 url("https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=1200&q=88") center / cover no-repeat; }
+.helpful-photo::before { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(29,15,15,.04) 30%, rgba(29,15,15,.83)); content: ""; }
+.helpful-photo > div { position: relative; z-index: 1; display: grid; gap: 11px; padding: 35px; color: white; }
+.helpful-photo span { color: #ffb2b3; font-size: 10px; font-weight: 900; letter-spacing: .14em; }
+.helpful-photo b { max-width: 350px; font-family: var(--display); font-size: 35px; letter-spacing: -.04em; line-height: 1.18; }
+.helpful-photo .reference-button { width: fit-content; margin-top: 8px; }
+
+.reference-gallery { padding: 92px 0 100px; background: #f8f8f8; }
+.gallery-heading { margin-bottom: 42px; }
+.gallery-grid { display: grid; grid-template-columns: 1.1fr .9fr .9fr 1fr; grid-template-rows: 250px; gap: 16px; }
+.gallery-photo { position: relative; overflow: hidden; background: #4a2f2f center / cover no-repeat; }
+.gallery-photo::after { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(25,15,15,.76)); content: ""; }
+.gallery-photo span { position: absolute; z-index: 1; right: 17px; bottom: 15px; left: 17px; color: white; font-size: 9px; font-weight: 900; letter-spacing: .09em; }
+.gallery-photo-one { background-image: url("https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&w=760&q=82"); }
+.gallery-photo-two { background-image: url("https://images.unsplash.com/photo-1584982751601-97dcc096659c?auto=format&fit=crop&w=760&q=82"); }
+.gallery-photo-three { background-image: url("https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=760&q=82"); }
+.gallery-join { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding: 28px; color: white; background: #e54245; }
+.gallery-join b { max-width: 200px; font-family: var(--display); font-size: 28px; letter-spacing: -.04em; line-height: 1.15; }
+.gallery-join .reference-button { margin-top: 20px; }
+
+.site-footer.reference-footer { grid-template-columns: minmax(230px, 1.2fr) minmax(130px, .65fr) minmax(140px, .65fr) minmax(180px, .9fr); gap: clamp(26px, 4vw, 66px); padding: 72px clamp(24px, 6vw, 108px) 60px; color: #c9c5c5; background: #252122; }
+.reference-footer .footer-brand { display: block; color: white; }
+.footer-logo-line { display: flex; gap: 10px; align-items: center; }
+.footer-logo-line .brand-mark { width: 34px; height: 41px; color: #e54245; }
+.footer-logo-line .brand-mark .brand-mark-cut { stroke: #252122; }
+.footer-logo-line span { display: grid; gap: 2px; }
+.footer-logo-line b { color: white; font-size: 19px; letter-spacing: -.04em; }
+.footer-logo-line em { color: #a9a1a2; font-size: 8px; font-style: normal; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.reference-footer .footer-brand p { max-width: 290px; margin: 19px 0 0; color: #aaa3a4; font-size: 11px; line-height: 1.75; }
+.reference-footer .footer-links { gap: 10px; }
+.reference-footer .footer-links b { margin-bottom: 3px; color: white; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.reference-footer .footer-links button, .reference-footer .footer-links span { color: #aaa3a4; font-size: 11px; line-height: 1.65; }
+.reference-footer .footer-links button:hover { color: white; }
+
+@media (max-width: 1080px) {
+  .reference-header .desktop-nav { gap: 14px; }
+  .reference-header .desktop-nav button { font-size: 9px; }
+  .process-grid li { grid-template-columns: 1fr; }
+  .campaign-grid { gap: 16px; }
+  .gallery-grid { grid-template-columns: repeat(2, 1fr); grid-template-rows: 230px 230px; }
+  .site-footer.reference-footer { grid-template-columns: 1.25fr 1fr 1fr; }
+  .reference-footer .footer-links:last-child { grid-column: 2 / -1; }
+}
+
+@media (max-width: 760px) {
+  .reference-topbar { min-height: 34px; padding: 7px 16px; font-size: 8px; }
+  .reference-topbar > div:last-child { display: none; }
+  .reference-topbar > div:first-child { gap: 6px; }
+  .reference-header.site-header { min-height: 64px; padding: 0 17px; }
+  .reference-header .brand-mark { width: 27px; height: 33px; }
+  .reference-header .brand strong { font-size: 16px; }
+  .reference-header .brand small { display: none; }
+  .reference-header .header-actions .button { min-height: 30px; padding: 7px 8px; font-size: 7px; }
+  .reference-header .header-bank-portal { display: none; }
+  .reference-hero { min-height: 530px; background-position: 57% center; }
+  .reference-hero-overlay { background: linear-gradient(90deg, rgba(32,18,18,.88), rgba(32,18,18,.58)); }
+  .reference-hero-content { width: auto; margin: 0; padding: 72px 24px; }
+  .reference-hero h1 { font-size: clamp(39px, 12vw, 56px); }
+  .reference-hero-copy { font-size: 12px; }
+  .reference-hero-actions { display: grid; grid-template-columns: 1fr; max-width: 250px; }
+  .reference-button { min-height: 42px; font-size: 9px; }
+  .donation-process, .campaign-section { padding-top: 65px; padding-bottom: 65px; }
+  .reference-section-heading h2 { font-size: 32px; }
+  .reference-section-heading > span { font-size: 11px; }
+  .process-grid { grid-template-columns: 1fr 1fr; margin-top: 30px; }
+  .process-grid li { min-height: 190px; padding: 20px 15px; border-bottom: 1px solid #eee3e3; }
+  .process-grid li:nth-child(2) { border-right: 0; }
+  .process-grid li:nth-child(3), .process-grid li:nth-child(4) { border-bottom: 0; }
+  .process-grid h3 { font-size: 12px; }
+  .process-grid p { font-size: 9px; }
+  .about-raktakosh { grid-template-columns: 1fr; gap: 34px; padding-top: 0; padding-bottom: 66px; }
+  .about-photo { min-height: 340px; }
+  .about-copy h2, .helpful-content h2 { font-size: 33px; }
+  .about-copy > p:not(.reference-eyebrow), .helpful-content > p:not(.reference-eyebrow) { font-size: 11px; }
+  .reference-cta-band { display: grid; gap: 22px; padding: 46px 24px; }
+  .reference-cta-band span { font-size: 11px; }
+  .campaign-grid { grid-template-columns: 1fr; margin-top: 30px; }
+  .campaign-card { min-height: 270px; }
+  .blood-bank-directory-section { padding: 66px 20px; }
+  .blood-bank-directory-section .directory-search-panel { margin-top: 24px; }
+  .helpful-information { grid-template-columns: 1fr; gap: 34px; padding-top: 67px; padding-bottom: 67px; }
+  .helpful-photo { min-height: 360px; }
+  .helpful-photo > div { padding: 26px; }
+  .helpful-photo b { font-size: 29px; }
+  .reference-gallery { padding: 65px 0; }
+  .gallery-grid { grid-template-columns: 1fr 1fr; grid-template-rows: 175px 175px; gap: 9px; }
+  .gallery-join { padding: 18px; }
+  .gallery-join b { font-size: 22px; }
+  .gallery-join .reference-button { margin-top: 14px; padding: 9px 10px; font-size: 8px; }
+  .site-footer.reference-footer { grid-template-columns: 1fr; gap: 29px; padding: 48px 24px; }
+  .reference-footer .footer-links:last-child { grid-column: auto; }
+}
