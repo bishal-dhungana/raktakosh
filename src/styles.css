@@ -741,6 +741,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--red); box-shadow
 .reference-topbar a, .reference-topbar button { padding: 0; border: 0; color: #e54245; background: transparent; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; }
 .reference-topbar a:hover, .reference-topbar button:hover { color: #a9262b; }
 .topbar-divider { color: #d9b5b6; }
+.locale-flags { display: inline-flex; gap: 3px; align-items: center; padding: 2px; border: 1px solid #efd5d5; border-radius: 999px; background: white; }
+.reference-topbar .locale-flags button { display: grid; width: 27px; height: 23px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 999px; color: inherit; background: transparent; font-size: 14px; line-height: 1; filter: grayscale(1); opacity: .58; }
+.reference-topbar .locale-flags button:hover { background: #fff0f0; filter: none; opacity: 1; }
+.reference-topbar .locale-flags button.active { border-color: #efb9ba; background: #fff0f0; filter: none; opacity: 1; }
+.locale-flag-icon { display: block; width: 17px; height: 12px; overflow: visible; box-shadow: 0 0 0 1px rgba(79, 53, 54, .18); }
+.locale-flag-nepal { width: 13px; height: 15px; box-shadow: none; }
+.locale-ne { font-family: "Noto Sans Devanagari", "Poppins", sans-serif; }
+.locale-ne .reference-eyebrow,
+.locale-ne .reference-header .desktop-nav button,
+.locale-ne .reference-button,
+.locale-ne .reference-footer .footer-links b { letter-spacing: 0; text-transform: none; }
 
 .site-header.reference-header { position: relative; z-index: 10; min-height: 82px; padding: 0 clamp(24px, 6vw, 108px); border-bottom: 1px solid #ececec; color: #302b2c; background: #fff; box-shadow: none; }
 .reference-header .brand { gap: 10px; color: #2b2829; }
@@ -896,6 +907,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--red); box-shadow
   .reference-topbar { min-height: 34px; padding: 7px 16px; font-size: 8px; }
   .reference-topbar > div:last-child { display: none; }
   .reference-topbar > div:first-child { gap: 6px; }
+  .reference-topbar .locale-flags button { width: 25px; height: 21px; font-size: 13px; }
   .reference-header.site-header { min-height: 64px; padding: 0 17px; }
   .reference-header .brand-mark { width: 27px; height: 33px; }
   .reference-header .brand strong { font-size: 16px; }

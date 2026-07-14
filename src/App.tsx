@@ -90,6 +90,10 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function localized(locale: Locale, english: string, nepali: string): string {
+  return locale === "ne" ? nepali : english;
+}
+
 function statusClass(status: RequestStatus): string {
   return `status-${status.replaceAll("_", "-")}`;
 }
@@ -132,7 +136,7 @@ function StatusPill({ status }: { status: RequestStatus }) {
 }
 
 function App() {
-  const [locale, setLocale] = useState<Locale>("en");
+  const [locale, setLocale] = useState<Locale>(() => window.localStorage.getItem("raktakosh-locale") === "ne" ? "ne" : "en");
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [view, setView] = useState<"home" | "dashboard">("home");
   const [authOpen, setAuthOpen] = useState(false);
@@ -143,6 +147,10 @@ function App() {
       .then((data) => setUser(data.user))
       .catch(() => undefined);
   }, []);
+  useEffect(() => {
+    window.localStorage.setItem("raktakosh-locale", locale);
+    document.documentElement.lang = locale === "ne" ? "ne" : "en";
+  }, [locale]);
 
   async function logout() {
     await api<void>("/api/auth/logout", { method: "POST" });
@@ -161,22 +169,22 @@ function App() {
   }
 
   return (
-    <div className="site-shell">
+    <div className={`site-shell locale-${locale}`}>
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <div className="reference-topbar">
-        <div><span>Need help finding a Blood Bank?</span><a href="tel:1133">Call 1133</a><span className="topbar-divider">|</span><span>Official directory for Nepal</span></div>
-        <div><span>Follow the verified facility handoff</span><button onClick={() => setLocale(locale === "en" ? "ne" : "en")}>{t(locale, "language")}</button></div>
+        <div><span>{localized(locale, "Need help finding a Blood Bank?", "रक्त बैंक खोज्न सहयोग चाहियो?")}</span><a href="tel:1133">{localized(locale, "Call 1133", "११३३ मा फोन गर्नुहोस्")}</a><span className="topbar-divider">|</span><span>{localized(locale, "Official directory for Nepal", "नेपालको आधिकारिक निर्देशिका")}</span></div>
+        <div><span>{localized(locale, "Follow the verified facility handoff", "प्रमाणित रक्त बैंक प्रक्रियामा जानुहोस्")}</span><div className="locale-flags" role="group" aria-label="Choose website language"><button className={locale === "en" ? "active" : ""} onClick={() => setLocale("en")} aria-pressed={locale === "en"} aria-label="Switch website to English" title="English"><LocaleFlag country="us" /></button><button className={locale === "ne" ? "active" : ""} onClick={() => setLocale("ne")} aria-pressed={locale === "ne"} aria-label="वेबसाइट नेपालीमा बदल्नुहोस्" title="नेपाली"><LocaleFlag country="np" /></button></div></div>
       </div>
       <header className="site-header reference-header">
-        <button className="brand" onClick={() => setView("home")} aria-label="Raktakosh home">
+        <button className="brand" onClick={() => setView("home")} aria-label={localized(locale, "Raktakosh home", "रक्तकोष गृहपृष्ठ")}>
           <Logo />
-          <span><strong>Raktakosh</strong><small>Blood Coordination Platform</small></span>
+          <span><strong>Raktakosh</strong><small>{localized(locale, "Blood Coordination Platform", "रक्त समन्वय प्लेटफर्म")}</small></span>
         </button>
-        <nav aria-label="Primary navigation" className="desktop-nav">
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("donation-process")?.scrollIntoView({ behavior: "smooth" }), 0); }}>How it works</button>
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("about-raktakosh")?.scrollIntoView({ behavior: "smooth" }), 0); }}>About us</button>
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Blood banks</button>
-          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" }), 0); }}>Information</button>
+        <nav aria-label={localized(locale, "Primary navigation", "मुख्य नेभिगेसन")} className="desktop-nav">
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("donation-process")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{localized(locale, "How it works", "कसरी काम गर्छ")}</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("about-raktakosh")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{localized(locale, "About us", "हाम्रो बारेमा")}</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{localized(locale, "Blood banks", "रक्त बैंकहरू")}</button>
+          <button onClick={() => { setView("home"); window.setTimeout(() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" }), 0); }}>{localized(locale, "Information", "जानकारी")}</button>
         </nav>
         <div className="header-actions">
           {user ? (
@@ -186,8 +194,8 @@ function App() {
             </>
           ) : (
             <>
-              <button className="button button-outline header-request-blood" onClick={startRequest}>Request blood</button>
-              <button className="button button-ink header-bank-portal" onClick={() => setBloodBankAuthOpen(true)}>Blood Bank Login</button>
+              <button className="button button-outline header-request-blood" onClick={startRequest}>{localized(locale, "Request blood", "रगत अनुरोध")}</button>
+              <button className="button button-ink header-bank-portal" onClick={() => setBloodBankAuthOpen(true)}>{localized(locale, "Blood Bank Login", "रक्त बैंक लगइन")}</button>
             </>
           )}
         </div>
@@ -209,10 +217,10 @@ function App() {
       </main>
 
       <footer className="site-footer reference-footer">
-        <div className="footer-brand"><div className="footer-logo-line"><Logo /><span><b>Raktakosh</b><em>Blood Coordination Platform · Nepal</em></span></div><p>Helping people find verified Blood Bank information and a clear next step when time matters.</p></div>
-        <div className="footer-links"><b>Quick links</b><button onClick={() => document.getElementById("about-raktakosh")?.scrollIntoView({ behavior: "smooth" })}>About Raktakosh</button><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find Blood Banks</button><button onClick={() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" })}>Helpful information</button></div>
-        <div className="footer-links"><b>Get involved</b><button onClick={() => setAuthOpen(true)}>Register as donor</button><button onClick={startRequest}>Request blood</button><button onClick={() => setBloodBankAuthOpen(true)}>Blood Bank portal</button></div>
-        <div className="footer-links"><b>Important note</b><span>Blood Banks confirm availability, compatibility, donation eligibility, and all clinical decisions.</span><span>© 2026 Raktakosh Nepal</span></div>
+        <div className="footer-brand"><div className="footer-logo-line"><Logo /><span><b>Raktakosh</b><em>{localized(locale, "Blood Coordination Platform · Nepal", "रक्त समन्वय प्लेटफर्म · नेपाल")}</em></span></div><p>{localized(locale, "Helping people find verified Blood Bank information and a clear next step when time matters.", "समय महत्त्वपूर्ण हुँदा प्रमाणित रक्त बैंक जानकारी र स्पष्ट अर्को कदम खोज्न सहयोग गर्दै।")}</p></div>
+        <div className="footer-links"><b>{localized(locale, "Quick links", "छिटो लिङ्कहरू")}</b><button onClick={() => document.getElementById("about-raktakosh")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "About Raktakosh", "रक्तकोषबारे")}</button><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "Find Blood Banks", "रक्त बैंक खोज्नुहोस्")}</button><button onClick={() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "Helpful information", "उपयोगी जानकारी")}</button></div>
+        <div className="footer-links"><b>{localized(locale, "Get involved", "सहभागी हुनुहोस्")}</b><button onClick={() => setAuthOpen(true)}>{localized(locale, "Register as donor", "दाता रूपमा दर्ता गर्नुहोस्")}</button><button onClick={startRequest}>{localized(locale, "Request blood", "रगत अनुरोध")}</button><button onClick={() => setBloodBankAuthOpen(true)}>{localized(locale, "Blood Bank portal", "रक्त बैंक पोर्टल")}</button></div>
+        <div className="footer-links"><b>{localized(locale, "Important note", "महत्त्वपूर्ण सूचना")}</b><span>{localized(locale, "Blood Banks confirm availability, compatibility, donation eligibility, and all clinical decisions.", "रक्त बैंकले उपलब्धता, अनुकूलता, रक्तदान योग्यता र सबै चिकित्सकीय निर्णय पुष्टि गर्छन्।")}</span><span>© 2026 Raktakosh Nepal</span></div>
       </footer>
 
       {authOpen && <AuthDialog locale={locale} initialAudience="personal" onOpenBloodBankLogin={() => { setAuthOpen(false); setBloodBankAuthOpen(true); }} onClose={() => setAuthOpen(false)} onLoggedIn={(loggedIn) => { setUser(loggedIn); setAuthOpen(false); setView("dashboard"); setNotice(`${loggedIn.name}'s workspace is ready.`); }} />}
@@ -238,37 +246,44 @@ function Home({
       <section className="reference-hero" aria-labelledby="hero-title">
         <div className="reference-hero-overlay" />
         <div className="reference-hero-content">
-          <p className="reference-eyebrow">DONATE BLOOD · SAVE A LIFE</p>
-          <h1 id="hero-title">Your blood can give<br /><strong>someone another tomorrow.</strong></h1>
-          <p className="reference-hero-copy">Find verified Blood Banks, check reported availability, or begin a private request that a facility can safely review.</p>
-          <div className="reference-hero-actions"><button className="reference-button reference-button-primary" onClick={onExplore}>Become a donor</button><button className="reference-button reference-button-light" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Find Blood Banks</button></div>
+          <p className="reference-eyebrow">{localized(locale, "DONATE BLOOD · SAVE A LIFE", "रक्तदान गर्नुहोस् · जीवन बचाउनुहोस्")}</p>
+          <h1 id="hero-title">{localized(locale, "Your blood can give", "तपाईंको रगतले") }<br /><strong>{localized(locale, "someone another tomorrow.", "कसैलाई नयाँ भोलि दिन सक्छ।")}</strong></h1>
+          <p className="reference-hero-copy">{localized(locale, "Find verified Blood Banks, check reported availability, or begin a private request that a facility can safely review.", "प्रमाणित रक्त बैंक खोज्नुहोस्, रिपोर्ट गरिएको उपलब्धता हेर्नुहोस्, वा संस्थाले सुरक्षित रूपमा समीक्षा गर्न सक्ने निजी अनुरोध पठाउनुहोस्।")}</p>
+          <div className="reference-hero-actions"><button className="reference-button reference-button-primary" onClick={onExplore}>{localized(locale, "Become a donor", "दाता बन्नुहोस्")}</button><button className="reference-button reference-button-light" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "Find Blood Banks", "रक्त बैंक खोज्नुहोस्")}</button></div>
         </div>
       </section>
 
       <section id="donation-process" className="donation-process section-wrap" aria-labelledby="process-title">
-        <div className="reference-section-heading"><p>HOW IT WORKS</p><h2 id="process-title">A simple path to the right support.</h2><span>Raktakosh makes it easier to take the next responsible step—while Blood Banks keep every clinical decision.</span></div>
-        <ol className="process-grid"><li><span className="process-icon">⌕</span><div><b>01</b><h3>Find a Blood Bank</h3><p>Search official facilities by district, name, blood group, or component.</p></div></li><li><span className="process-icon">▤</span><div><b>02</b><h3>Share your request</h3><p>Submit a private request with the required verification document.</p></div></li><li><span className="process-icon">♥</span><div><b>03</b><h3>Facility reviews</h3><p>Authorized staff review the request and reported availability.</p></div></li><li><span className="process-icon">✓</span><div><b>04</b><h3>Get the next step</h3><p>The selected Blood Bank coordinates the safe operational handoff.</p></div></li></ol>
+        <div className="reference-section-heading"><p>{localized(locale, "HOW IT WORKS", "कसरी काम गर्छ")}</p><h2 id="process-title">{localized(locale, "A simple path to the right support.", "सही सहयोगसम्म पुग्ने सरल बाटो।")}</h2><span>{localized(locale, "Raktakosh makes it easier to take the next responsible step—while Blood Banks keep every clinical decision.", "रक्तकोषले जिम्मेवार अर्को कदम लिन सजिलो बनाउँछ—हरेक चिकित्सकीय निर्णय भने रक्त बैंककै हुन्छ।")}</span></div>
+        <ol className="process-grid"><li><span className="process-icon">⌕</span><div><b>01</b><h3>{localized(locale, "Find a Blood Bank", "रक्त बैंक खोज्नुहोस्")}</h3><p>{localized(locale, "Search official facilities by district, name, blood group, or component.", "जिल्ला, नाम, रक्त समूह वा अवयवअनुसार आधिकारिक संस्थाहरू खोज्नुहोस्।")}</p></div></li><li><span className="process-icon">▤</span><div><b>02</b><h3>{localized(locale, "Share your request", "आफ्नो अनुरोध पठाउनुहोस्")}</h3><p>{localized(locale, "Submit a private request with the required verification document.", "आवश्यक प्रमाणिकरण कागजातसहित निजी अनुरोध पठाउनुहोस्।")}</p></div></li><li><span className="process-icon">♥</span><div><b>03</b><h3>{localized(locale, "Facility reviews", "संस्थाले समीक्षा गर्छ")}</h3><p>{localized(locale, "Authorized staff review the request and reported availability.", "अधिकृत कर्मचारीले अनुरोध र रिपोर्ट गरिएको उपलब्धता समीक्षा गर्छन्।")}</p></div></li><li><span className="process-icon">✓</span><div><b>04</b><h3>{localized(locale, "Get the next step", "अर्को कदम पाउनुहोस्")}</h3><p>{localized(locale, "The selected Blood Bank coordinates the safe operational handoff.", "छनोट गरिएको रक्त बैंकले सुरक्षित प्रक्रियाको अर्को कदम समन्वय गर्छ।")}</p></div></li></ol>
       </section>
 
       <section id="about-raktakosh" className="about-raktakosh section-wrap" aria-labelledby="about-title">
-        <div className="about-photo" role="img" aria-label="Blood donor being cared for by a health worker"><div className="about-photo-badge"><b>Raktakosh</b><span>Private · verified · clear</span></div></div>
-        <div className="about-copy"><p className="reference-eyebrow">WHO WE ARE</p><h2 id="about-title">Reliable information can make an urgent moment feel manageable.</h2><p>Raktakosh connects people to official Blood Bank contacts and supports a private, facility-led coordination flow. It does not promise reservations or replace medical judgement.</p><ul><li><span>✓</span> Official facility directory across Nepal</li><li><span>✓</span> Private requests with document review</li><li><span>✓</span> Consent-first donor coordination</li></ul><button className="reference-text-link" onClick={() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" })}>Learn about blood donation <span>→</span></button></div>
+        <div className="about-photo" role="img" aria-label={localized(locale, "Blood donor being cared for by a health worker", "स्वास्थ्यकर्मीको हेरचाहमा रक्तदाता")}><div className="about-photo-badge"><b>Raktakosh</b><span>{localized(locale, "Private · verified · clear", "निजी · प्रमाणित · स्पष्ट")}</span></div></div>
+        <div className="about-copy"><p className="reference-eyebrow">{localized(locale, "WHO WE ARE", "हामी को हौँ")}</p><h2 id="about-title">{localized(locale, "Reliable information can make an urgent moment feel manageable.", "विश्वसनीय जानकारीले आपतकालीन समयलाई सहज बनाउन सक्छ।")}</h2><p>{localized(locale, "Raktakosh connects people to official Blood Bank contacts and supports a private, facility-led coordination flow. It does not promise reservations or replace medical judgement.", "रक्तकोषले मानिसलाई आधिकारिक रक्त बैंक सम्पर्कसँग जोड्छ र संस्थाको नेतृत्वमा निजी समन्वय प्रक्रिया सहज बनाउँछ। यसले आरक्षणको वाचा गर्दैन वा चिकित्सकीय निर्णयको स्थान लिँदैन।")}</p><ul><li><span>✓</span>{localized(locale, "Official facility directory across Nepal", "नेपालभरिका आधिकारिक संस्थाको निर्देशिका")}</li><li><span>✓</span>{localized(locale, "Private requests with document review", "कागजात समीक्षासहित निजी अनुरोध")}</li><li><span>✓</span>{localized(locale, "Consent-first donor coordination", "सहमतिमा आधारित दाता समन्वय")}</li></ul><button className="reference-text-link" onClick={() => document.getElementById("helpful-information")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "Learn about blood donation", "रक्तदानबारे जान्नुहोस्")} <span>→</span></button></div>
       </section>
 
-      <section className="reference-cta-band" aria-labelledby="cta-band-title"><div><p>EVERY DONATION MATTERS</p><h2 id="cta-band-title">Give hope. Give blood.</h2><span>Join as a donor or help someone reach a verified Blood Bank today.</span></div><div><button className="reference-button reference-button-light" onClick={onExplore}>Register as donor</button><button className="reference-button reference-button-outline-light" onClick={onRequest}>Request blood</button></div></section>
+      <section className="reference-cta-band" aria-labelledby="cta-band-title"><div><p>{localized(locale, "EVERY DONATION MATTERS", "हरेक रक्तदान महत्त्वपूर्ण छ")}</p><h2 id="cta-band-title">{localized(locale, "Give hope. Give blood.", "आशा दिनुहोस्। रगत दिनुहोस्।")}</h2><span>{localized(locale, "Join as a donor or help someone reach a verified Blood Bank today.", "दाता बन्नुहोस् वा आजै कसैलाई प्रमाणित रक्त बैंकसम्म पुग्न सहयोग गर्नुहोस्।")}</span></div><div><button className="reference-button reference-button-light" onClick={onExplore}>{localized(locale, "Register as donor", "दाता रूपमा दर्ता")}</button><button className="reference-button reference-button-outline-light" onClick={onRequest}>{localized(locale, "Request blood", "रगत अनुरोध")}</button></div></section>
 
       <section className="campaign-section section-wrap" aria-labelledby="campaign-title">
-        <div className="reference-section-heading centered"><p>RAKTAKOSH SERVICES</p><h2 id="campaign-title">Support that meets people where they are.</h2><span>Three clear routes for donors, families, and verified Blood Bank teams.</span></div>
-        <div className="campaign-grid"><article className="campaign-card campaign-directory"><div><span>01</span><h3>Find a Blood Bank</h3><p>Search the official public directory, even without an account.</p><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Search directory →</button></div></article><article className="campaign-card campaign-request"><div><span>02</span><h3>Request blood safely</h3><p>Send a document-backed request to your chosen facility for review.</p><button onClick={onRequest}>Start a request →</button></div></article><article className="campaign-card campaign-donor"><div><span>03</span><h3>Join as a donor</h3><p>Share your details and let a facility make the final eligibility decision.</p><button onClick={onExplore}>Become a donor →</button></div></article></div>
+        <div className="reference-section-heading centered"><p>{localized(locale, "RAKTAKOSH SERVICES", "रक्तकोष सेवाहरू")}</p><h2 id="campaign-title">{localized(locale, "Support that meets people where they are.", "मानिसलाई आवश्यक ठाउँमै पुग्ने सहयोग।")}</h2><span>{localized(locale, "Three clear routes for donors, families, and verified Blood Bank teams.", "दाता, परिवार र प्रमाणित रक्त बैंक टोलीका लागि तीन स्पष्ट मार्ग।")}</span></div>
+        <div className="campaign-grid"><article className="campaign-card campaign-directory"><div><span>01</span><h3>{localized(locale, "Find a Blood Bank", "रक्त बैंक खोज्नुहोस्")}</h3><p>{localized(locale, "Search the official public directory, even without an account.", "खाता नबनाई पनि सार्वजनिक आधिकारिक निर्देशिका खोज्नुहोस्।")}</p><button onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "Search directory", "निर्देशिका खोज्नुहोस्")} →</button></div></article><article className="campaign-card campaign-request"><div><span>02</span><h3>{localized(locale, "Request blood safely", "सुरक्षित रूपमा रगत अनुरोध")}</h3><p>{localized(locale, "Send a document-backed request to your chosen facility for review.", "आफ्नो छनोटको संस्थामा कागजातसहित समीक्षा अनुरोध पठाउनुहोस्।")}</p><button onClick={onRequest}>{localized(locale, "Start a request", "अनुरोध सुरु गर्नुहोस्")} →</button></div></article><article className="campaign-card campaign-donor"><div><span>03</span><h3>{localized(locale, "Join as a donor", "दाता बन्नुहोस्")}</h3><p>{localized(locale, "Share your details and let a facility make the final eligibility decision.", "आफ्नो विवरण दिनुहोस् र अन्तिम योग्यताको निर्णय संस्थालाई गर्न दिनुहोस्।")}</p><button onClick={onExplore}>{localized(locale, "Become a donor", "दाता बन्नुहोस्")} →</button></div></article></div>
       </section>
 
-      <BloodBankDirectory preferredDistrict={preferredDistrict} />
+      <BloodBankDirectory locale={locale} preferredDistrict={preferredDistrict} />
 
-      <section id="helpful-information" className="helpful-information section-wrap" aria-labelledby="education-title"><div className="helpful-content"><p className="reference-eyebrow">HELPFUL INFORMATION</p><h2 id="education-title">Know the process before you donate or request.</h2><p>Clear, calm information helps families and voluntary donors decide their next step with confidence.</p><div className="helpful-list"><article><span>01</span><div><h3>{t(locale, "whatBloodTitle")}</h3><p>{t(locale, "whatBloodBody")}</p></div></article><article><span>02</span><div><h3>{t(locale, "whyDonateTitle")}</h3><p>{t(locale, "whyDonateBody")}</p></div></article><article><span>03</span><div><h3>{t(locale, "donationSafetyTitle")}</h3><p>{t(locale, "donationSafetyBody")}</p></div></article></div></div><aside className="helpful-photo" role="img" aria-label="Blood donation appointment information"><div><span>NEED BLOOD?</span><b>Find the nearest verified facility.</b><button className="reference-button reference-button-primary" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>Search now</button></div></aside></section>
+      <section id="helpful-information" className="helpful-information section-wrap" aria-labelledby="education-title"><div className="helpful-content"><p className="reference-eyebrow">{localized(locale, "HELPFUL INFORMATION", "उपयोगी जानकारी")}</p><h2 id="education-title">{localized(locale, "Know the process before you donate or request.", "रक्तदान वा अनुरोधअघि प्रक्रिया बुझ्नुहोस्।")}</h2><p>{localized(locale, "Clear, calm information helps families and voluntary donors decide their next step with confidence.", "स्पष्ट र सहज जानकारीले परिवार र स्वेच्छिक दातालाई आत्मविश्वासका साथ अर्को कदम चाल्न सहयोग गर्छ।")}</p><div className="helpful-list"><article><span>01</span><div><h3>{t(locale, "whatBloodTitle")}</h3><p>{t(locale, "whatBloodBody")}</p></div></article><article><span>02</span><div><h3>{t(locale, "whyDonateTitle")}</h3><p>{t(locale, "whyDonateBody")}</p></div></article><article><span>03</span><div><h3>{t(locale, "donationSafetyTitle")}</h3><p>{t(locale, "donationSafetyBody")}</p></div></article></div></div><aside className="helpful-photo" role="img" aria-label={localized(locale, "Blood donation appointment information", "रक्तदान अपोइन्टमेन्ट जानकारी")}><div><span>{localized(locale, "NEED BLOOD?", "रगत चाहियो?")}</span><b>{localized(locale, "Find the nearest verified facility.", "नजिकको प्रमाणित संस्था खोज्नुहोस्।")}</b><button className="reference-button reference-button-primary" onClick={() => document.getElementById("blood-banks")?.scrollIntoView({ behavior: "smooth" })}>{localized(locale, "Search now", "अहिले खोज्नुहोस्")}</button></div></aside></section>
 
-      <section className="reference-gallery" aria-labelledby="gallery-title"><div className="section-wrap"><div className="reference-section-heading gallery-heading"><p>MAKE A DIFFERENCE</p><h2 id="gallery-title">Small acts. Real impact.</h2><span>Each responsible connection helps make a stronger blood-donation network.</span></div><div className="gallery-grid"><div className="gallery-photo gallery-photo-one"><span>VOLUNTARY DONATION</span></div><div className="gallery-photo gallery-photo-two"><span>SAFE FACILITY HANDOFF</span></div><div className="gallery-photo gallery-photo-three"><span>COMMUNITY CARE</span></div><div className="gallery-join"><b>Be part of the life-saving circle.</b><button className="reference-button reference-button-primary" onClick={onExplore}>Join Raktakosh</button></div></div></div></section>
+      <section className="reference-gallery" aria-labelledby="gallery-title"><div className="section-wrap"><div className="reference-section-heading gallery-heading"><p>{localized(locale, "MAKE A DIFFERENCE", "परिवर्तन ल्याउनुहोस्")}</p><h2 id="gallery-title">{localized(locale, "Small acts. Real impact.", "सानो कदम। वास्तविक प्रभाव।")}</h2><span>{localized(locale, "Each responsible connection helps make a stronger blood-donation network.", "हरेक जिम्मेवार सम्पर्कले बलियो रक्तदान सञ्जाल बनाउन सहयोग गर्छ।")}</span></div><div className="gallery-grid"><div className="gallery-photo gallery-photo-one"><span>{localized(locale, "VOLUNTARY DONATION", "स्वेच्छिक रक्तदान")}</span></div><div className="gallery-photo gallery-photo-two"><span>{localized(locale, "SAFE FACILITY HANDOFF", "सुरक्षित संस्था प्रक्रिया")}</span></div><div className="gallery-photo gallery-photo-three"><span>{localized(locale, "COMMUNITY CARE", "सामुदायिक हेरचाह")}</span></div><div className="gallery-join"><b>{localized(locale, "Be part of the life-saving circle.", "जीवन बचाउने यात्राको हिस्सा बन्नुहोस्।")}</b><button className="reference-button reference-button-primary" onClick={onExplore}>{localized(locale, "Join Raktakosh", "रक्तकोषमा जोडिनुहोस्")}</button></div></div></div></section>
     </>
   );
+}
+
+function LocaleFlag({ country }: { country: "us" | "np" }): ReactNode {
+  if (country === "us") {
+    return <svg className="locale-flag-icon" viewBox="0 0 28 18" aria-hidden="true"><rect width="28" height="18" fill="#fff" />{[0, 2.77, 5.54, 8.31, 11.08, 13.85, 16.62].map((y) => <rect key={y} y={y} width="28" height="1.39" fill="#b22234" />)}<rect width="12.2" height="9.7" fill="#3c3b6e" />{[2.1, 4.5, 6.9, 9.3].map((x) => <circle key={`a-${x}`} cx={x} cy="2.25" r=".55" fill="white" />)}{[3.3, 5.7, 8.1, 10.5].map((x) => <circle key={`b-${x}`} cx={x} cy="4.6" r=".55" fill="white" />)}{[2.1, 4.5, 6.9, 9.3].map((x) => <circle key={`c-${x}`} cx={x} cy="6.95" r=".55" fill="white" />)}<circle cx="3.3" cy="9.25" r=".55" fill="white" /><circle cx="5.7" cy="9.25" r=".55" fill="white" /><circle cx="8.1" cy="9.25" r=".55" fill="white" /></svg>;
+  }
+  return <svg className="locale-flag-icon locale-flag-nepal" viewBox="0 0 20 22" aria-hidden="true"><path d="M3 1 17 8.2 7.6 8.2 17 16 3 21Z" fill="#dc143c" stroke="#003893" strokeWidth="1.8" strokeLinejoin="round" /><path d="M6.5 5.1c1.25.1 2.25.95 2.5 2.12-1.25.27-2.5-.42-2.9-1.6.03-.18.14-.36.3-.52Z" fill="white" /><circle cx="8.6" cy="13.9" r="1.8" fill="white" /><path d="m8.6 11.55.38 1.1 1.12.04-.9.68.32 1.09-.92-.62-.92.62.32-1.09-.9-.68 1.12-.04Z" fill="#dc143c" /></svg>;
 }
 
 function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, onLoggedIn }: { locale: Locale; initialAudience: "personal" | "blood_bank"; onOpenBloodBankLogin?: () => void; onClose: () => void; onLoggedIn: (user: CurrentUser) => void }) {
@@ -348,7 +363,7 @@ function AuthDialog({ locale, initialAudience, onOpenBloodBankLogin, onClose, on
   );
 }
 
-function BloodBankDirectory({ preferredDistrict }: { preferredDistrict: string | null }) {
+function BloodBankDirectory({ locale, preferredDistrict }: { locale: Locale; preferredDistrict: string | null }) {
   const [filters, setFilters] = useState({ q: "", district: preferredDistrict ?? "", bloodGroup: "", rhFactor: "", component: "" });
   const [results, setResults] = useState<PublicBloodBank[]>([]);
   const [loading, setLoading] = useState(true);
@@ -359,7 +374,7 @@ function BloodBankDirectory({ preferredDistrict }: { preferredDistrict: string |
     try {
       const payload = await api<{ results: PublicBloodBank[] }>(`/api/public/blood-banks${toQuery(searchFilters)}`);
       setResults(payload.results);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "The official Blood Bank directory could not be loaded."); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : localized(locale, "The official Blood Bank directory could not be loaded.", "आधिकारिक रक्त बैंक निर्देशिका लोड हुन सकेन।")); }
     finally { setLoading(false); }
   }
   useEffect(() => { void search(); }, []);
@@ -371,33 +386,33 @@ function BloodBankDirectory({ preferredDistrict }: { preferredDistrict: string |
     void search(next);
   }, [preferredDistrict]);
   return <section id="blood-banks" className="blood-bank-directory-section section-wrap" aria-labelledby="blood-bank-directory-title">
-    <div className="section-kicker">02 · OFFICIAL BLOOD BANK DIRECTORY</div>
-    <div className="section-heading split-heading"><div><h2 id="blood-bank-directory-title">Find Blood Banks<br /><em>across Nepal.</em></h2></div><p>Search the government NPHL Blood Transfusion Service Centre directory without signing in. Contacts and stock are source-reported, not guaranteed reservations.</p></div>
+    <div className="section-kicker">02 · {localized(locale, "OFFICIAL BLOOD BANK DIRECTORY", "आधिकारिक रक्त बैंक निर्देशिका")}</div>
+    <div className="section-heading split-heading"><div><h2 id="blood-bank-directory-title">{localized(locale, "Find Blood Banks", "रक्त बैंक खोज्नुहोस्")}<br /><em>{localized(locale, "across Nepal.", "नेपालभरि।")}</em></h2></div><p>{localized(locale, "Search the government NPHL Blood Transfusion Service Centre directory without signing in. Contacts and stock are source-reported, not guaranteed reservations.", "लगइन नगरी सरकारी NPHL रक्तसञ्चार सेवा केन्द्र निर्देशिका खोज्नुहोस्। सम्पर्क र स्टक स्रोतले रिपोर्ट गरेका हुन्, आरक्षणको ग्यारेन्टी होइनन्।")}</p></div>
     <Card className="search-panel directory-search-panel"><form onSubmit={(event) => { event.preventDefault(); void search(); }}><div className="directory-search-grid">
-      <label><span>Search Blood Banks</span><input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="Name, district, municipality" maxLength={100} /></label>
-      <label><span>District</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}><option value="">All districts</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
-      <label><span>Blood group</span><select value={filters.bloodGroup} onChange={(event) => setFilters({ ...filters, bloodGroup: event.target.value })}><option value="">Any group</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label>
-      <label><span>Rh factor</span><select value={filters.rhFactor} onChange={(event) => setFilters({ ...filters, rhFactor: event.target.value })}><option value="">Any</option><option value="+">Positive (+)</option><option value="-">Negative (−)</option></select></label>
-      <label><span>Component</span><select value={filters.component} onChange={(event) => setFilters({ ...filters, component: event.target.value })}><option value="">Any component</option>{directoryComponents.map((component) => <option key={component}>{component}</option>)}</select></label>
-      <button className="button button-signal search-submit" type="submit" disabled={loading}>{loading ? "Searching…" : "Search directory"}</button>
+      <label><span>{localized(locale, "Search Blood Banks", "रक्त बैंक खोज्नुहोस्")}</span><input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder={localized(locale, "Name, district, municipality", "नाम, जिल्ला, नगरपालिका")} maxLength={100} /></label>
+      <label><span>{t(locale, "district")}</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}><option value="">{t(locale, "allDistricts")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
+      <label><span>{t(locale, "bloodGroup")}</span><select value={filters.bloodGroup} onChange={(event) => setFilters({ ...filters, bloodGroup: event.target.value })}><option value="">{localized(locale, "Any group", "सबै समूह")}</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label>
+      <label><span>{localized(locale, "Rh factor", "आरएच कारक")}</span><select value={filters.rhFactor} onChange={(event) => setFilters({ ...filters, rhFactor: event.target.value })}><option value="">{localized(locale, "Any", "जुनसुकै")}</option><option value="+">{localized(locale, "Positive (+)", "पोजिटिभ (+)")}</option><option value="-">{localized(locale, "Negative (−)", "नेगेटिभ (−)")}</option></select></label>
+      <label><span>{t(locale, "component")}</span><select value={filters.component} onChange={(event) => setFilters({ ...filters, component: event.target.value })}><option value="">{localized(locale, "Any component", "जुनसुकै अवयव")}</option>{directoryComponents.map((component) => <option key={component}>{component}</option>)}</select></label>
+      <button className="button button-signal search-submit" type="submit" disabled={loading}>{loading ? localized(locale, "Searching…", "खोजिँदैछ…") : localized(locale, "Search directory", "निर्देशिका खोज्नुहोस्")}</button>
     </div></form></Card>
-    <div className="results-bar" aria-live="polite"><span><b>{loading ? "…" : results.length}</b> official Blood Bank record{loading || results.length === 1 ? "" : "s"}</span><span>NPHL-reported stock is shown with the last directory sync time.</span></div>
+    <div className="results-bar" aria-live="polite"><span><b>{loading ? "…" : results.length}</b> {localized(locale, `official Blood Bank record${loading || results.length === 1 ? "" : "s"}`, "आधिकारिक रक्त बैंक विवरण")}</span><span>{localized(locale, "NPHL-reported stock is shown with the last directory sync time.", "NPHL ले रिपोर्ट गरेको स्टक अन्तिम निर्देशिका समक्रमण समयसहित देखाइन्छ।")}</span></div>
     {error ? <Notice tone="warning">{error}</Notice> : null}
-    <div className="blood-bank-grid">{!loading && results.map((bank) => <BloodBankCard key={bank.id} bank={bank} />)}{!loading && !results.length && <EmptyState title="No official Blood Bank record found" body="Try another district or remove a stock filter. This directory never creates unverified or fake Blood Bank entries." />}</div>
+    <div className="blood-bank-grid">{!loading && results.map((bank) => <BloodBankCard key={bank.id} bank={bank} locale={locale} />)}{!loading && !results.length && <EmptyState title={localized(locale, "No official Blood Bank record found", "आधिकारिक रक्त बैंक विवरण भेटिएन")} body={localized(locale, "Try another district or remove a stock filter. This directory never creates unverified or fake Blood Bank entries.", "अर्को जिल्ला प्रयास गर्नुहोस् वा स्टक फिल्टर हटाउनुहोस्। यस निर्देशिकाले अप्रमाणित वा नक्कली रक्त बैंक विवरण बनाउँदैन।")} />}</div>
   </section>;
 }
 
-function BloodBankCard({ bank, compact = false }: { bank: PublicBloodBank; compact?: boolean }) {
+function BloodBankCard({ bank, compact = false, locale = "en" }: { bank: PublicBloodBank; compact?: boolean; locale?: Locale }) {
   const phoneHref = bank.phone?.replace(/[^+\d]/g, "") ?? "";
   const listedStock = bank.availability.slice(0, compact ? 3 : 6);
   return <article className={`blood-bank-card ${compact ? "compact" : ""}`}>
-    <div className="availability-card-top"><span className="facility-type">OFFICIAL DIRECTORY</span><Pill className="availability-pill">{bank.totalStock > 0 ? `${bank.totalStock} units reported` : "No stock reported"}</Pill></div>
+    <div className="availability-card-top"><span className="facility-type">{localized(locale, "OFFICIAL DIRECTORY", "आधिकारिक निर्देशिका")}</span><Pill className="availability-pill">{bank.totalStock > 0 ? localized(locale, `${bank.totalStock} units reported`, `${bank.totalStock} एकाइ रिपोर्ट गरिएको`) : localized(locale, "No stock reported", "स्टक रिपोर्ट गरिएको छैन")}</Pill></div>
     <h3>{bank.name}</h3>
     <p className="facility-location">{bank.district}{bank.municipality ? ` · ${bank.municipality}` : ""}</p>
-    {bank.phone ? <a className="blood-bank-contact" href={`tel:${phoneHref}`}>Call {bank.phone}</a> : <span className="blood-bank-contact unavailable">Phone not listed by NPHL</span>}
+    {bank.phone ? <a className="blood-bank-contact" href={`tel:${phoneHref}`}>{localized(locale, "Call", "फोन गर्नुहोस्")} {bank.phone}</a> : <span className="blood-bank-contact unavailable">{localized(locale, "Phone not listed by NPHL", "NPHL मा फोन सूचीकृत छैन")}</span>}
     {!compact && bank.services ? <p className="blood-bank-services">{bank.services}</p> : null}
-    <div className="blood-bank-stock"><b>Reported availability</b>{listedStock.length ? <ul>{listedStock.map((entry) => <li key={`${entry.componentCategory}-${entry.bloodGroup}-${entry.rhFactor}`}><span>{entry.bloodGroup}<sup>{entry.rhFactor}</sup> · {entry.componentCategory}</span><strong>{entry.quantity}</strong></li>)}</ul> : <p>No positive component quantities were reported in the latest NPHL snapshot.</p>}</div>
-    <div className="blood-bank-card-bottom"><span>NPHL synced<br /><b>{formatDate(bank.lastSyncedAt, "en")}</b></span><a href={bank.sourceUrl} target="_blank" rel="noreferrer">Official source ↗</a></div>
+    <div className="blood-bank-stock"><b>{localized(locale, "Reported availability", "रिपोर्ट गरिएको उपलब्धता")}</b>{listedStock.length ? <ul>{listedStock.map((entry) => <li key={`${entry.componentCategory}-${entry.bloodGroup}-${entry.rhFactor}`}><span>{entry.bloodGroup}<sup>{entry.rhFactor}</sup> · {entry.componentCategory}</span><strong>{entry.quantity}</strong></li>)}</ul> : <p>{localized(locale, "No positive component quantities were reported in the latest NPHL snapshot.", "पछिल्लो NPHL विवरणमा कुनै सकारात्मक रक्त अवयव मात्रा रिपोर्ट गरिएको छैन।")}</p>}</div>
+    <div className="blood-bank-card-bottom"><span>{localized(locale, "NPHL synced", "NPHL समक्रमित")}<br /><b>{formatDate(bank.lastSyncedAt, locale)}</b></span><a href={bank.sourceUrl} target="_blank" rel="noreferrer">{localized(locale, "Official source", "आधिकारिक स्रोत")} ↗</a></div>
   </article>;
 }
 
