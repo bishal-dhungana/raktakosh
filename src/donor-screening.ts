@@ -1,4 +1,5 @@
 export const DONOR_SCREENING_VERSION = "v1";
+export const DONOR_MINIMUM_AGE = 18;
 
 export const DONOR_SCREENING_QUESTIONS = [
   {
@@ -69,6 +70,19 @@ export function deriveAge(dateOfBirth: string, reference = new Date()): number |
 export function isValidDateOfBirth(dateOfBirth: string, reference = new Date()): boolean {
   const age = deriveAge(dateOfBirth, reference);
   return age !== null && age >= 0 && age <= 120;
+}
+
+export function meetsMinimumDonorAge(dateOfBirth: string, reference = new Date()): boolean {
+  const age = deriveAge(dateOfBirth, reference);
+  return age !== null && age >= DONOR_MINIMUM_AGE;
+}
+
+export function latestEligibleDonorBirthDate(reference = new Date()): string {
+  const today = kathmanduDateParts(reference);
+  const year = today.year - DONOR_MINIMUM_AGE;
+  const lastDayOfMonth = new Date(Date.UTC(year, today.month, 0)).getUTCDate();
+  const day = Math.min(today.day, lastDayOfMonth);
+  return `${year}-${String(today.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 export function hasCompleteScreeningAnswers(value: unknown): value is Record<DonorScreeningQuestionKey, DonorScreeningAnswer> {

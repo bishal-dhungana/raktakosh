@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { availabilityState, canTransition, isStale } from "./domain";
 import { canViewFacilityCasework, isBloodBankStaff } from "./facility-access";
-import { deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, preliminaryEligibilityStatus } from "../src/donor-screening";
+import { DONOR_MINIMUM_AGE, deriveAge, hasCompleteScreeningAnswers, isValidDateOfBirth, latestEligibleDonorBirthDate, meetsMinimumDonorAge, preliminaryEligibilityStatus } from "../src/donor-screening";
 import { NEPAL_DISTRICTS, isNepalDistrict } from "../src/nepal-districts";
 import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, safeDocumentName, scanDocument, validateDocument } from "./document-storage";
 import { donationCooldownActive, donationCooldownUntil, isValidDonationDate } from "../src/donor-cooldown";
@@ -54,6 +54,14 @@ test("derives a Nepal-local age without storing an editable age", () => {
   assert.equal(deriveAge("2000-07-13", birthday), 26);
   assert.equal(isValidDateOfBirth("2026-02-29", birthday), false);
   assert.equal(isValidDateOfBirth("2000-07-13", birthday), true);
+});
+
+test("requires donors to be at least the configured minimum age", () => {
+  const reference = new Date("2026-07-12T18:15:00.000Z");
+  assert.equal(DONOR_MINIMUM_AGE, 18);
+  assert.equal(meetsMinimumDonorAge("2008-07-13", reference), true);
+  assert.equal(meetsMinimumDonorAge("2008-07-14", reference), false);
+  assert.equal(latestEligibleDonorBirthDate(reference), "2008-07-13");
 });
 
 test("keeps pre-screening conservative", () => {

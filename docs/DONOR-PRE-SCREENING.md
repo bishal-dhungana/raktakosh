@@ -6,17 +6,16 @@ Raktakosh collects a donor's date of birth and a limited, structured pre-screeni
 
 ## Data model
 
-- **Date of birth** is required for new donor registration and stored in the donor profile.
+- **Date of birth** is required for new donor registration and stored in the donor profile. A donor must be at least 18 years old, calculated in the `Asia/Kathmandu` time zone.
 - **Age** is calculated by the API in the `Asia/Kathmandu` time zone. It is never stored as an editable field.
-- **Pre-screening answers** use fixed question keys and the values `yes`, `no`, `unsure`, or `not applicable`. The feature intentionally does not collect free-text medical histories.
-- **Consent** is required before health-adjacent answers are submitted.
+- **Pre-screening answers** use fixed question keys and the values `yes`, `no`, `unsure`, or `not applicable`. Every question and the related consent are required before a new donor account can be created. The feature intentionally does not collect free-text medical histories.
 - **Questionnaire version** is stored with each screening to support future policy revisions.
 
 ## Screening statuses
 
 | Status | Meaning |
 |---|---|
-| Not started | The donor has not submitted the current questionnaire. |
+| Not started | A legacy donor account has not yet submitted the current questionnaire. New donor accounts cannot be created in this state. |
 | Pending | The donor submitted answers without a `yes` or `unsure` response; a facility must still make the final decision. |
 | Needs review | At least one answer requires confidential facility follow-up, or a reviewer kept the case in review. |
 | Provisionally eligible | An authorized facility reviewer recorded a preliminary operational status. This is not clinical clearance. |

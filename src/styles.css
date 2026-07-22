@@ -309,6 +309,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--red); box-shadow
 .screening-status { display: flex; flex-wrap: wrap; gap: 8px 11px; }
 .screening-status small { margin-left: auto; color: #9b555d; font-size: 9px; }
 .screening-question-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 11px; }
+.registration-screening { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-muted); }
+.registration-screening > b { color: var(--red-deep); font-family: var(--mono); font-size: 9px; letter-spacing: .07em; text-transform: uppercase; }
+.registration-screening > small { color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.required-marker { color: var(--red); font-style: normal; font-weight: 800; }
 .screening-question-list label { min-height: 108px; align-content: space-between; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-muted); }
 .screening-question-list label > span { color: var(--ink); font-size: 10px; font-weight: 600; letter-spacing: 0; line-height: 1.5; }
 .screening-consent { margin-top: 13px; }

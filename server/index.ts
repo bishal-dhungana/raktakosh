@@ -56,11 +56,16 @@ import { canViewFacilityCasework, isBloodBankStaff } from "./facility-access";
 import {
   DONOR_SCREENING_QUESTIONS,
   DONOR_SCREENING_VERSION,
+  DONOR_MINIMUM_AGE,
   deriveAge,
   hasCompleteScreeningAnswers,
   isValidDateOfBirth,
+  latestEligibleDonorBirthDate,
+  meetsMinimumDonorAge,
   preliminaryEligibilityStatus,
-  type DonorEligibilityStatus
+  type DonorEligibilityStatus,
+  type DonorScreeningAnswer,
+  type DonorScreeningQuestionKey
 } from "../src/donor-screening";
 import { isNepalDistrict } from "../src/nepal-districts";
 import { donationCooldownActive, donationCooldownMonths, donationCooldownUntil, isValidDonationDate, nepalCalendarDate } from "../src/donor-cooldown";
@@ -191,6 +196,19 @@ function allowedOrigins(): Set<string> {
 function getToken(req: Request): string | undefined {
   return typeof req.cookies?.[sessionCookieName] === "string" ? req.cookies[sessionCookieName] : undefined;
 }
+
+async function donorDateOfBirth(userId: number): Promise<string | null> {
+  const profile = await one<{ dateOfBirth: string | null }>("SELECT date_of_birth as dateOfBirth FROM donor_profiles WHERE user_id = ? LIMIT 1", [userId]);
+  return profile?.dateOfBirth ?? null;
+}
+
+async function donorMeetsMinimumAge(userId: number): Promise<boolean> {
+  const dateOfBirth = await donorDateOfBirth(userId);
+  // Legacy donor records without a DOB remain able to sign in so that they can be migrated safely.
+  return !dateOfBirth || meetsMinimumDonorAge(dateOfBirth);
+}
+
+const donorMinimumAgeMessage = `Donor registration and access require a minimum age of ${DONOR_MINIMUM_AGE}. Please use a requester account instead.`;
 
 async function hasVerifiedFacility(viewer: CurrentUser): Promise<boolean> {
   if (!viewer.facilityId) return false;
@@ -387,8 +405,13 @@ function statusMessage(status: RequestStatus): string {
 
 async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const viewer = await getCurrentUser(getToken(req));
+    const token = getToken(req);
+    const viewer = await getCurrentUser(token);
     if (!viewer) return apiError(res, 401, "Please sign in to continue.");
+    if (viewer.role === "donor" && !(await donorMeetsMinimumAge(viewer.id))) {
+      if (token) await deleteSession(token);
+      return apiError(res, 403, donorMinimumAgeMessage);
+    }
     if (viewer.passwordChangeRequired && req.path !== "/api/auth/change-password" && req.path !== "/api/auth/logout") {
       return apiError(res, 428, "Change the temporary password before accessing the Blood Bank workspace.");
     }
@@ -467,6 +490,21 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
     if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || !isStrongPassword(password) || !["requester", "donor"].includes(role) || !isNepalDistrict(district)) {
       return apiError(res, 400, "Enter a valid name, email, phone, Nepal district, account type, and a password of at least 12 characters with upper-case, lower-case, number, and symbol.");
     }
+    let donorRegistration: { bloodGroup: string; rhFactor: string; dateOfBirth: string; answers: Record<DonorScreeningQuestionKey, DonorScreeningAnswer> } | null = null;
+    if (role === "donor") {
+      const bloodGroup = text(req.body?.bloodGroup, 4);
+      const rhFactor = text(req.body?.rhFactor, 2);
+      const dateOfBirth = text(req.body?.dateOfBirth, 10);
+      const answers = req.body?.answers;
+      if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !isValidDateOfBirth(dateOfBirth)) {
+        return apiError(res, 400, "Donor registration requires a valid blood group, Rh factor, and date of birth.");
+      }
+      if (!meetsMinimumDonorAge(dateOfBirth)) return apiError(res, 400, donorMinimumAgeMessage);
+      if (req.body?.healthDataConsent !== true || !hasCompleteScreeningAnswers(answers)) {
+        return apiError(res, 400, "Answer every required confidential pre-screening question and confirm consent before registering as a donor.");
+      }
+      donorRegistration = { bloodGroup, rhFactor, dateOfBirth, answers };
+    }
     const existing = await getAuthUserByEmail(email);
     if (existing) return apiError(res, 409, "An account already exists for this email address.");
     const createdAt = new Date().toISOString();
@@ -476,16 +514,25 @@ app.post("/api/auth/register", authRateLimit, async (req, res, next) => {
         [name, email, phone, district, role, hashPassword(password), createdAt, createdAt]
       );
       const insertedId = Number(userResult.insertId);
-      if (role === "donor") {
-        const bloodGroup = text(req.body?.bloodGroup, 4);
-        const rhFactor = text(req.body?.rhFactor, 2);
-        const dateOfBirth = text(req.body?.dateOfBirth, 10);
-        if (!validGroups.has(bloodGroup) || !validRh.has(rhFactor) || !isNepalDistrict(district) || !isValidDateOfBirth(dateOfBirth)) throw new Error("Donor registration requires a valid blood group, Rh factor, Nepal district, and date of birth.");
+      if (donorRegistration) {
+        const eligibilityStatus = preliminaryEligibilityStatus(donorRegistration.answers);
         await connection.execute(
           `INSERT INTO donor_profiles (user_id, self_reported_group, self_reported_rh, district, date_of_birth, availability, outreach_consent, contact_window, max_contacts_per_month, pre_screening_result, policy_version, last_donation_date, last_contact_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, 'available', ?, '08:00–20:00 NPT', 2, ?, 'Donor pre-screen v1.0', NULL, NULL, ?, ?)`,
-          [insertedId, bloodGroup, rhFactor, district, dateOfBirth, req.body?.outreachConsent ? 1 : 0, "Complete the confidential health pre-screening. A blood-centre clinician makes the final eligibility decision.", createdAt, createdAt]
+          [insertedId, donorRegistration.bloodGroup, donorRegistration.rhFactor, district, donorRegistration.dateOfBirth, req.body?.outreachConsent ? 1 : 0, eligibilityStatus === "needs_review" ? "Your answers need confidential blood-centre review before any donation outreach." : "Your pre-screening was submitted. A blood-centre clinician must make the final eligibility decision.", createdAt, createdAt]
         );
+        const [screening] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO donor_health_screenings (donor_user_id, questionnaire_version, eligibility_status, medical_data_consent_at, submitted_at, reviewed_by_user_id, reviewed_at, review_reason, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`,
+          [insertedId, DONOR_SCREENING_VERSION, eligibilityStatus, createdAt, createdAt, createdAt, createdAt]
+        );
+        const screeningId = Number(screening.insertId);
+        for (const question of DONOR_SCREENING_QUESTIONS) {
+          await connection.execute(
+            "INSERT INTO donor_screening_answers (screening_id, question_key, answer, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            [screeningId, question.key, donorRegistration.answers[question.key], createdAt, createdAt]
+          );
+        }
       }
       return insertedId;
     });
@@ -509,6 +556,11 @@ async function completeLogin(req: Request, res: Response, staffOnly: boolean): P
   if (staffOnly && !isBloodBankStaff(user.role)) {
     await writeAudit(user.id, "blood_bank_login_denied", "account", user.id, { source: clientIp(req), reason: "not_blood_bank_staff" });
     return apiError(res, 403, "This is the Blood Bank staff sign-in. Use the standard account sign-in for this account.");
+  }
+  if (user.role === "donor" && !(await donorMeetsMinimumAge(user.id))) {
+    await deleteUserSessions(user.id);
+    await writeAudit(user.id, "donor_login_denied", "account", user.id, { source: clientIp(req), reason: "under_minimum_age" });
+    return apiError(res, 403, donorMinimumAgeMessage);
   }
   if (requiresSuperAdminMfa(user.role)) {
     const purpose = user.mfaEnabledAt && user.mfaSecretEncrypted ? "super_admin_mfa_verify" : "super_admin_mfa_enroll";
@@ -976,12 +1028,13 @@ app.post("/api/requests/:id/outreach", requireAuth, requireCsrf, requireRoles("r
     const cooldownMonths = donationCooldownMonths();
     const candidates = await query<{ userId: number }>(
       `SELECT d.user_id as userId FROM donor_profiles d
-        WHERE d.outreach_consent = 1 AND d.availability = 'available' AND d.district = ?
+        JOIN donor_health_screenings s ON s.donor_user_id = d.user_id AND s.questionnaire_version = ?
+        WHERE d.outreach_consent = 1 AND d.availability = 'available' AND d.date_of_birth <= ? AND d.district = ?
           AND d.self_reported_group = ? AND d.self_reported_rh = ?
           AND (d.last_contact_at IS NULL OR d.last_contact_at < ?)
           AND (d.last_donation_date IS NULL OR DATE_ADD(d.last_donation_date, INTERVAL ${cooldownMonths} MONTH) <= ?)
         ORDER BY d.last_contact_at ASC LIMIT 25`,
-      [row.district, row.blood_group, row.rh_factor, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(), nepalCalendarDate()]
+      [DONOR_SCREENING_VERSION, latestEligibleDonorBirthDate(), row.district, row.blood_group, row.rh_factor, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(), nepalCalendarDate()]
     );
     if (!candidates.length) return apiError(res, 409, "No consented, available donors meet the configured outreach criteria right now.");
     const createdAt = new Date().toISOString();
