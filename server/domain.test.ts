@@ -8,6 +8,7 @@ import { detectDocumentMime, documentUploadSecurity, documentWorkflowEnabled, sa
 import { donationCooldownActive, donationCooldownUntil, isValidDonationDate } from "../src/donor-cooldown";
 import { isStrongPassword } from "./password-policy";
 import { componentCategory, nphlDistrictToCanonical, parseNphlDirectoryPage } from "./blood-bank-directory";
+import { hasAnyBloodRequirement, hasCompleteBloodRequirement } from "../src/blood-requirement";
 
 test("uses a complete canonical directory of Nepal districts", () => {
   assert.equal(NEPAL_DISTRICTS.length, 77);
@@ -23,6 +24,14 @@ test("normalizes official NPHL Blood Bank directory entries without inventing di
   assert.equal(nphlDistrictToCanonical("Not an official district"), null);
   assert.equal(componentCategory("Plasma FFP (-30°C)"), "Plasma");
   assert.equal(componentCategory("Packed Red cells"), "Packed red cells");
+});
+
+test("requires a complete blood requirement before using availability filters", () => {
+  assert.equal(hasAnyBloodRequirement({}), false);
+  assert.equal(hasCompleteBloodRequirement({}), false);
+  assert.equal(hasAnyBloodRequirement({ bloodGroup: "A" }), true);
+  assert.equal(hasCompleteBloodRequirement({ bloodGroup: "A", rhFactor: "+" }), false);
+  assert.equal(hasCompleteBloodRequirement({ bloodGroup: "A", rhFactor: "+", component: "Platelets" }), true);
 });
 
 test("limits facility casework to coordination roles", () => {

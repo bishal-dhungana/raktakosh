@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { ApiError, api, toQuery } from "./api";
+import { hasAnyBloodRequirement, hasCompleteBloodRequirement } from "./blood-requirement";
 import { DONOR_MINIMUM_AGE, DONOR_SCREENING_QUESTIONS, latestEligibleDonorBirthDate, type DonorScreeningAnswer, type DonorScreeningQuestionKey } from "./donor-screening";
 import { t } from "./i18n";
 import { NEPAL_DISTRICTS } from "./nepal-districts";
@@ -20,7 +21,7 @@ import type {
 
 const groups = ["A", "B", "AB", "O"];
 const components = ["Whole blood", "Packed red cells", "Platelets", "Plasma"];
-const directoryComponents = [...components, "Other"];
+const directoryComponents = components;
 
 const statusLabels: Record<RequestStatus, string> = {
   draft: "Draft",
@@ -370,6 +371,10 @@ function BloodBankDirectory({ locale, preferredDistrict }: { locale: Locale; pre
   const [error, setError] = useState("");
   const appliedPreferredDistrict = useRef(Boolean(preferredDistrict));
   async function search(searchFilters = filters) {
+    const bloodRequirement = { bloodGroup: searchFilters.bloodGroup, rhFactor: searchFilters.rhFactor, component: searchFilters.component };
+    if (hasAnyBloodRequirement(bloodRequirement) && !hasCompleteBloodRequirement(bloodRequirement)) {
+      setResults([]); setError(localized(locale, "Choose blood group, Rh factor, and component together to find matching Blood Banks.", "मिल्ने रक्त बैंक खोज्न रक्त समूह, आरएच कारक र अवयव सँगै छान्नुहोस्।")); setLoading(false); return;
+    }
     setLoading(true); setError("");
     try {
       const payload = await api<{ results: PublicBloodBank[] }>(`/api/public/blood-banks${toQuery(searchFilters)}`);
@@ -385,33 +390,41 @@ function BloodBankDirectory({ locale, preferredDistrict }: { locale: Locale; pre
     setFilters(next);
     void search(next);
   }, [preferredDistrict]);
+  function clearFilters() {
+    const next = { q: "", district: "", bloodGroup: "", rhFactor: "", component: "" };
+    setFilters(next);
+    void search(next);
+  }
+  const isRequirementSearch = hasCompleteBloodRequirement(filters);
+  const requirementLabel = isRequirementSearch ? `${filters.bloodGroup}${filters.rhFactor} · ${filters.component}` : "";
   return <section id="blood-banks" className="blood-bank-directory-section section-wrap" aria-labelledby="blood-bank-directory-title">
     <div className="section-kicker">02 · {localized(locale, "OFFICIAL BLOOD BANK DIRECTORY", "आधिकारिक रक्त बैंक निर्देशिका")}</div>
     <div className="section-heading split-heading"><div><h2 id="blood-bank-directory-title">{localized(locale, "Find Blood Banks", "रक्त बैंक खोज्नुहोस्")}<br /><em>{localized(locale, "across Nepal.", "नेपालभरि।")}</em></h2></div><p>{localized(locale, "Search the government NPHL Blood Transfusion Service Centre directory without signing in. Contacts and stock are source-reported, not guaranteed reservations.", "लगइन नगरी सरकारी NPHL रक्तसञ्चार सेवा केन्द्र निर्देशिका खोज्नुहोस्। सम्पर्क र स्टक स्रोतले रिपोर्ट गरेका हुन्, आरक्षणको ग्यारेन्टी होइनन्।")}</p></div>
-    <Card className="search-panel directory-search-panel"><form onSubmit={(event) => { event.preventDefault(); void search(); }}><div className="directory-search-grid">
+    <Card className="search-panel directory-search-panel"><form onSubmit={(event) => { event.preventDefault(); void search(); }}><p className="directory-requirement-note">{localized(locale, "Need blood? Choose all three: blood group, Rh factor, and component. Results will show only Blood Banks reporting that exact requirement.", "रगत चाहिएको छ? रक्त समूह, आरएच कारक र अवयव तीनै छान्नुहोस्। नतिजामा त्यही आवश्यकता रिपोर्ट गरेका रक्त बैंक मात्र देखाइन्छन्।")}</p><div className="directory-search-grid">
       <label><span>{localized(locale, "Search Blood Banks", "रक्त बैंक खोज्नुहोस्")}</span><input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder={localized(locale, "Name, district, municipality", "नाम, जिल्ला, नगरपालिका")} maxLength={100} /></label>
       <label><span>{t(locale, "district")}</span><select value={filters.district} onChange={(event) => setFilters({ ...filters, district: event.target.value })}><option value="">{t(locale, "allDistricts")}</option>{NEPAL_DISTRICTS.map((district) => <option key={district}>{district}</option>)}</select></label>
       <label><span>{t(locale, "bloodGroup")}</span><select value={filters.bloodGroup} onChange={(event) => setFilters({ ...filters, bloodGroup: event.target.value })}><option value="">{localized(locale, "Any group", "सबै समूह")}</option>{groups.map((group) => <option key={group}>{group}</option>)}</select></label>
       <label><span>{localized(locale, "Rh factor", "आरएच कारक")}</span><select value={filters.rhFactor} onChange={(event) => setFilters({ ...filters, rhFactor: event.target.value })}><option value="">{localized(locale, "Any", "जुनसुकै")}</option><option value="+">{localized(locale, "Positive (+)", "पोजिटिभ (+)")}</option><option value="-">{localized(locale, "Negative (−)", "नेगेटिभ (−)")}</option></select></label>
       <label><span>{t(locale, "component")}</span><select value={filters.component} onChange={(event) => setFilters({ ...filters, component: event.target.value })}><option value="">{localized(locale, "Any component", "जुनसुकै अवयव")}</option>{directoryComponents.map((component) => <option key={component}>{component}</option>)}</select></label>
       <button className="button button-signal search-submit" type="submit" disabled={loading}>{loading ? localized(locale, "Searching…", "खोजिँदैछ…") : localized(locale, "Search directory", "निर्देशिका खोज्नुहोस्")}</button>
-    </div></form></Card>
-    <div className="results-bar" aria-live="polite"><span><b>{loading ? "…" : results.length}</b> {localized(locale, `official Blood Bank record${loading || results.length === 1 ? "" : "s"}`, "आधिकारिक रक्त बैंक विवरण")}</span><span>{localized(locale, "NPHL-reported stock is shown with the last directory sync time.", "NPHL ले रिपोर्ट गरेको स्टक अन्तिम निर्देशिका समक्रमण समयसहित देखाइन्छ।")}</span></div>
+    </div>{(filters.q || filters.district || hasAnyBloodRequirement(filters)) && <button className="text-button directory-reset" type="button" onClick={clearFilters}>{localized(locale, "Clear all search filters", "सबै खोज फिल्टर हटाउनुहोस्")}</button>}</form></Card>
+    <div className="results-bar" aria-live="polite"><span><b>{loading ? "…" : results.length}</b> {isRequirementSearch ? localized(locale, `Blood Bank match${loading || results.length === 1 ? "" : "es"} for ${requirementLabel}`, `${requirementLabel} का लागि रक्त बैंक मिलान`) : localized(locale, `official Blood Bank record${loading || results.length === 1 ? "" : "s"}`, "आधिकारिक रक्त बैंक विवरण")}</span><span>{isRequirementSearch ? localized(locale, "Only the requested component and blood type are shown below.", "तल अनुरोध गरिएको रक्त अवयव र रक्त प्रकार मात्र देखाइन्छ।") : localized(locale, "NPHL-reported stock is shown with the last directory sync time.", "NPHL ले रिपोर्ट गरेको स्टक अन्तिम निर्देशिका समक्रमण समयसहित देखाइन्छ।")}</span></div>
     {error ? <Notice tone="warning">{error}</Notice> : null}
-    <div className="blood-bank-grid">{!loading && results.map((bank) => <BloodBankCard key={bank.id} bank={bank} locale={locale} />)}{!loading && !results.length && <EmptyState title={localized(locale, "No official Blood Bank record found", "आधिकारिक रक्त बैंक विवरण भेटिएन")} body={localized(locale, "Try another district or remove a stock filter. This directory never creates unverified or fake Blood Bank entries.", "अर्को जिल्ला प्रयास गर्नुहोस् वा स्टक फिल्टर हटाउनुहोस्। यस निर्देशिकाले अप्रमाणित वा नक्कली रक्त बैंक विवरण बनाउँदैन।")} />}</div>
+    <div className="blood-bank-grid">{!loading && results.map((bank) => <BloodBankCard key={bank.id} bank={bank} locale={locale} requirementSearch={isRequirementSearch} />)}{!loading && !results.length && <EmptyState title={localized(locale, "No official Blood Bank record found", "आधिकारिक रक्त बैंक विवरण भेटिएन")} body={isRequirementSearch ? localized(locale, "No Blood Bank currently reports this exact blood requirement. Try another district or contact the nearest verified Blood Bank for confirmation.", "हाल कुनै रक्त बैंकले यही रक्त आवश्यकता रिपोर्ट गरेको छैन। अर्को जिल्ला प्रयास गर्नुहोस् वा पुष्टि गर्न नजिकको प्रमाणित रक्त बैंकलाई सम्पर्क गर्नुहोस्।") : localized(locale, "Try another district or remove a stock filter. This directory never creates unverified or fake Blood Bank entries.", "अर्को जिल्ला प्रयास गर्नुहोस् वा स्टक फिल्टर हटाउनुहोस्। यस निर्देशिकाले अप्रमाणित वा नक्कली रक्त बैंक विवरण बनाउँदैन।")} />}</div>
   </section>;
 }
 
-function BloodBankCard({ bank, compact = false, locale = "en" }: { bank: PublicBloodBank; compact?: boolean; locale?: Locale }) {
+function BloodBankCard({ bank, compact = false, locale = "en", requirementSearch = false }: { bank: PublicBloodBank; compact?: boolean; locale?: Locale; requirementSearch?: boolean }) {
   const phoneHref = bank.phone?.replace(/[^+\d]/g, "") ?? "";
   const listedStock = bank.availability.slice(0, compact ? 3 : 6);
+  const matchingQuantity = bank.availability.reduce((total, entry) => total + entry.quantity, 0);
   return <article className={`blood-bank-card ${compact ? "compact" : ""}`}>
-    <div className="availability-card-top"><span className="facility-type">{localized(locale, "OFFICIAL DIRECTORY", "आधिकारिक निर्देशिका")}</span><Pill className="availability-pill">{bank.totalStock > 0 ? localized(locale, `${bank.totalStock} units reported`, `${bank.totalStock} एकाइ रिपोर्ट गरिएको`) : localized(locale, "No stock reported", "स्टक रिपोर्ट गरिएको छैन")}</Pill></div>
+    <div className="availability-card-top"><span className="facility-type">{localized(locale, "OFFICIAL DIRECTORY", "आधिकारिक निर्देशिका")}</span><Pill className="availability-pill">{requirementSearch ? localized(locale, `${matchingQuantity} matching unit${matchingQuantity === 1 ? "" : "s"}`, `${matchingQuantity} मिल्ने एकाइ`) : bank.totalStock > 0 ? localized(locale, `${bank.totalStock} units reported`, `${bank.totalStock} एकाइ रिपोर्ट गरिएको`) : localized(locale, "No stock reported", "स्टक रिपोर्ट गरिएको छैन")}</Pill></div>
     <h3>{bank.name}</h3>
     <p className="facility-location">{bank.district}{bank.municipality ? ` · ${bank.municipality}` : ""}</p>
     {bank.phone ? <a className="blood-bank-contact" href={`tel:${phoneHref}`}>{localized(locale, "Call", "फोन गर्नुहोस्")} {bank.phone}</a> : <span className="blood-bank-contact unavailable">{localized(locale, "Phone not listed by NPHL", "NPHL मा फोन सूचीकृत छैन")}</span>}
     {!compact && bank.services ? <p className="blood-bank-services">{bank.services}</p> : null}
-    <div className="blood-bank-stock"><b>{localized(locale, "Reported availability", "रिपोर्ट गरिएको उपलब्धता")}</b>{listedStock.length ? <ul>{listedStock.map((entry) => <li key={`${entry.componentCategory}-${entry.bloodGroup}-${entry.rhFactor}`}><span>{entry.bloodGroup}<sup>{entry.rhFactor}</sup> · {entry.componentCategory}</span><strong>{entry.quantity}</strong></li>)}</ul> : <p>{localized(locale, "No positive component quantities were reported in the latest NPHL snapshot.", "पछिल्लो NPHL विवरणमा कुनै सकारात्मक रक्त अवयव मात्रा रिपोर्ट गरिएको छैन।")}</p>}</div>
+    <div className="blood-bank-stock"><b>{requirementSearch ? localized(locale, "Matching reported availability", "मिल्ने रिपोर्ट गरिएको उपलब्धता") : localized(locale, "Reported availability", "रिपोर्ट गरिएको उपलब्धता")}</b>{listedStock.length ? <ul>{listedStock.map((entry) => <li key={`${entry.componentCategory}-${entry.bloodGroup}-${entry.rhFactor}`}><span>{entry.bloodGroup}<sup>{entry.rhFactor}</sup> · {entry.componentCategory}</span><strong>{entry.quantity}</strong></li>)}</ul> : <p>{localized(locale, "No positive component quantities were reported in the latest NPHL snapshot.", "पछिल्लो NPHL विवरणमा कुनै सकारात्मक रक्त अवयव मात्रा रिपोर्ट गरिएको छैन।")}</p>}</div>
     <div className="blood-bank-card-bottom"><span>{localized(locale, "NPHL synced", "NPHL समक्रमित")}<br /><b>{formatDate(bank.lastSyncedAt, locale)}</b></span><a href={bank.sourceUrl} target="_blank" rel="noreferrer">{localized(locale, "Official source", "आधिकारिक स्रोत")} ↗</a></div>
   </article>;
 }

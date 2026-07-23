@@ -23,11 +23,11 @@ The current NPHL snapshot may not cover every Nepal district. This is a source-c
 - `blood_bank_stock` stores the latest positive quantities by Blood Bank, broad component category, blood group, and Rh factor.
 - `users.district` stores the account’s selected district. New requester and donor registration requires it; existing donor districts are backfilled during migration.
 
-Stock component labels are normalized into Whole blood, Packed red cells, Platelets, Plasma, or Other for filtering. The source remains the authority for the actual inventory status.
+Stock component labels are normalized into Whole blood, Packed red cells, Platelets, Plasma, or Other. Exact public requirement searches use only the four named component categories; ambiguous `Other` entries remain visible during general directory browsing but are not presented as a seeker requirement.
 
 ## Public behaviour
 
-Guests can search by name/location, district, blood group, Rh factor, and component. Results show:
+Guests can browse by name/location and district. To search for blood availability, they select blood group, Rh factor, and component together; results then show only the exact matching reported stock. The search can be reset in one click. Results show:
 
 - listed Blood Bank telephone number as a click-to-call action;
 - location and services;

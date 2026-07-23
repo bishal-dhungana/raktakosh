@@ -68,6 +68,7 @@ import {
   type DonorScreeningQuestionKey
 } from "../src/donor-screening";
 import { isNepalDistrict } from "../src/nepal-districts";
+import { hasAnyBloodRequirement, hasCompleteBloodRequirement } from "../src/blood-requirement";
 import { donationCooldownActive, donationCooldownMonths, donationCooldownUntil, isValidDonationDate, nepalCalendarDate } from "../src/donor-cooldown";
 import { isStrongPassword } from "./password-policy";
 import {
@@ -94,7 +95,7 @@ const frontendOrigin = process.env.FRONTEND_ORIGIN?.replace(/\/$/, "");
 const validGroups = new Set(["A", "B", "AB", "O"]);
 const validRh = new Set(["+", "-"]);
 const validComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma"]);
-const validDirectoryComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma", "Other"]);
+const validDirectoryComponents = new Set(["Whole blood", "Packed red cells", "Platelets", "Plasma"]);
 const facilityRoles = new Set<UserRole>(["inventory_manager", "reviewer", "facility_admin"]);
 const localOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
 const sessionCookieName = "__Host-rk_session";
@@ -740,6 +741,10 @@ app.get("/api/public/blood-banks", async (req, res, next) => {
     if (bloodGroup && !validGroups.has(bloodGroup)) return apiError(res, 400, "Choose a supported blood group.");
     if (rhFactor && !validRh.has(rhFactor)) return apiError(res, 400, "Choose a supported Rh factor.");
     if (component && !validDirectoryComponents.has(component)) return apiError(res, 400, "Choose a supported blood component.");
+    const bloodRequirement = { bloodGroup, rhFactor, component };
+    if (hasAnyBloodRequirement(bloodRequirement) && !hasCompleteBloodRequirement(bloodRequirement)) {
+      return apiError(res, 400, "To search for blood, choose the blood group, Rh factor, and component together.");
+    }
 
     const filters = ["b.active = 1"];
     const values: unknown[] = [];
@@ -748,11 +753,10 @@ app.get("/api/public/blood-banks", async (req, res, next) => {
       filters.push("CONCAT_WS(' ', b.name, b.district, COALESCE(b.municipality, ''), COALESCE(b.address, '')) LIKE ?");
       values.push(`%${keyword}%`);
     }
-    if (bloodGroup || rhFactor || component) {
+    if (hasCompleteBloodRequirement(bloodRequirement)) {
       const stockFilters = ["s.blood_bank_id = b.id", "s.available_quantity > 0"];
-      if (bloodGroup) { stockFilters.push("s.blood_group = ?"); values.push(bloodGroup); }
-      if (rhFactor) { stockFilters.push("s.rh_factor = ?"); values.push(rhFactor); }
-      if (component) { stockFilters.push("s.component_category = ?"); values.push(component); }
+      stockFilters.push("s.blood_group = ?", "s.rh_factor = ?", "s.component_category = ?");
+      values.push(bloodGroup, rhFactor, component);
       filters.push(`EXISTS (SELECT 1 FROM blood_bank_stock s WHERE ${stockFilters.join(" AND ")})`);
     }
     const banks = await query<PublicBloodBankRow>(
@@ -764,13 +768,19 @@ app.get("/api/public/blood-banks", async (req, res, next) => {
       values
     );
     const ids = banks.map((bank) => bank.id);
+    const stockFilters = ["blood_bank_id IN (" + ids.map(() => "?").join(",") + ")", "available_quantity > 0"];
+    const stockValues: unknown[] = [...ids];
+    if (hasCompleteBloodRequirement(bloodRequirement)) {
+      stockFilters.push("blood_group = ?", "rh_factor = ?", "component_category = ?");
+      stockValues.push(bloodGroup, rhFactor, component);
+    }
     const stock = ids.length
       ? await query<PublicBloodBankStockRow>(
         `SELECT blood_bank_id as bloodBankId, component, component_category as componentCategory, blood_group as bloodGroup,
                 rh_factor as rhFactor, available_quantity as quantity
-         FROM blood_bank_stock WHERE blood_bank_id IN (${ids.map(() => "?").join(",")}) AND available_quantity > 0
+         FROM blood_bank_stock WHERE ${stockFilters.join(" AND ")}
          ORDER BY component_category, blood_group, rh_factor`,
-        ids
+        stockValues
       )
       : [];
     const availabilityByBank = new Map<number, PublicBloodBank["availability"]>();
